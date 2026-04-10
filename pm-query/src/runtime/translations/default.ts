@@ -1,0 +1,20 @@
+export default {
+  _widgetLabel: 'PMQuery',
+  county: 'County',
+  route: 'Route',
+  beginPM: 'Begin PM',
+  endPM: 'End PM',
+  search: 'Search',
+  clear: 'Clear',
+  searching: 'Searching...',
+  noResults: 'No postmile points found for this query.',
+  errorQuery: 'Query failed. Check your layer connection.',
+  errorNoMap: 'No map connected. Configure a map widget in settings.',
+  errorNoLayer: 'No data source configured. Set a layer in settings.',
+  errorFields: 'Begin PM must be less than End PM.',
+  resultTitle: 'Route {ROUTE} — {COUNTY} County',
+  resultPM: 'PM {BEGIN} – {END}',
+  pointCount: '{count} points connected',
+  district: 'District',
+  loadingCounties: 'Loading counties...'
+}

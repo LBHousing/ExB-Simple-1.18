@@ -1,0 +1,21 @@
+{
+  "name": "pm-query",
+  "label": "PMQuery",
+  "type": "widget",
+  "version": "1.18.0",
+  "exbVersion": "1.18.0",
+  "author": "LBHousing",
+  "description": "Postmile query widget — search District 2 highway postmile points by County, Route, and PM range. Connects results into a route line on the map and merges begin/end PM into a single result card.",
+  "dependency": "jimu-arcgis",
+  "copyright": "",
+  "license": "http://www.apache.org/licenses/LICENSE-2.0",
+  "properties": {
+    "hasConfig": true,
+    "hasSettingPage": true
+  },
+  "defaultSize": {
+    "width": 340,
+    "height": 520
+  },
+  "translatedLocales": ["en"]
+}
