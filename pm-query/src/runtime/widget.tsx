@@ -4,7 +4,7 @@ import {
   jsx,
   css,
   type AllWidgetProps,
-  DataSourceManager,
+  DataSourceComponent,
   type FeatureLayerDataSource,
   hooks
 } from 'jimu-core'
@@ -13,7 +13,6 @@ import {
   Select,
   Option,
   TextInput,
-  Label,
   Alert,
   Loading,
   LoadingType,
@@ -85,7 +84,6 @@ const widgetStyle = css`
   .pmq-district-badge {
     display: inline-flex;
     align-items: center;
-    gap: 6px;
     background-color: var(--sys-color-action-selected, rgba(0,121,193,0.08));
     border: 1px solid var(--sys-color-primary-main, #0079c1);
     border-radius: 4px;
@@ -105,11 +103,9 @@ const widgetStyle = css`
   }
 
   .pmq-result {
-    margin: 0 16px 16px;
     border: 1px solid var(--sys-color-divider-secondary);
     border-radius: 4px;
     overflow: hidden;
-    flex-shrink: 0;
     background-color: var(--sys-color-surface-paper);
 
     .pmq-result-header {
@@ -159,11 +155,6 @@ const widgetStyle = css`
     }
   }
 
-  .pmq-alert {
-    margin: 0 16px 12px;
-    flex-shrink: 0;
-  }
-
   .pmq-footer {
     padding: 4px 12px;
     border-top: 1px solid var(--sys-color-divider-secondary);
@@ -200,13 +191,16 @@ export default function Widget (props: AllWidgetProps<IMConfig>) {
     defaultMessage: defaultMessages._widgetLabel
   })
 
+  // ── Data source — stored when DataSourceComponent signals it is ready ──────
+  const dsRef = React.useRef<FeatureLayerDataSource | null>(null)
+
   // Form state
   const [county, setCounty] = React.useState('')
   const [route, setRoute] = React.useState('')
   const [beginPM, setBeginPM] = React.useState('')
   const [endPM, setEndPM] = React.useState('')
 
-  // County dropdown options
+  // County dropdown
   const [countyOptions, setCountyOptions] = React.useState<string[]>([])
   const [loadingCounties, setLoadingCounties] = React.useState(false)
 
@@ -215,51 +209,54 @@ export default function Widget (props: AllWidgetProps<IMConfig>) {
   const [error, setError] = React.useState<string | null>(null)
   const [result, setResult] = React.useState<ResultCard | null>(null)
 
-  // Map view refs
+  // Map view ref
   const jimuMapViewRef = React.useRef<JimuMapView | null>(null)
   const graphicsLayerRef = React.useRef<__esri.GraphicsLayer | null>(null)
 
-  const dsId = config.useDataSource?.dataSourceId
+  // ── DataSourceComponent callback — fires when DS is ready ──────────────────
+  // This is the correct pattern from query-simple: never call ds.load() manually.
+  const handleDataSourceCreated = React.useCallback(async (ds: FeatureLayerDataSource) => {
+    dsRef.current = ds
 
-  // ── Load county options from layer on mount ────────────────────────────────
-  React.useEffect(() => {
-    if (!dsId) return
+    // Get the real FeatureLayer using query-simple's proven pattern:
+    // getOriginDataSources()[0] → createJSAPILayerByDataSource() → load()
+    try {
+      const originDS = ds.getOriginDataSources()[0] as FeatureLayerDataSource
+      if (!originDS) return
 
-    const ds = DataSourceManager.getInstance().getDataSource(dsId) as FeatureLayerDataSource
-    if (!ds) return
+      const featureLayer = await originDS.createJSAPILayerByDataSource() as __esri.FeatureLayer
+      await featureLayer.load()
 
-    setLoadingCounties(true)
-    ds.load().then(() => {
-      const layer = (ds as any).layer as __esri.FeatureLayer
-      if (!layer) { setLoadingCounties(false); return }
-
-      layer.queryFeatures({
+      setLoadingCounties(true)
+      const qResult = await featureLayer.queryFeatures({
         where: `DISTRICT = '${DISTRICT}'`,
         outFields: ['COUNTY'],
         returnDistinctValues: true,
         orderByFields: ['COUNTY ASC']
-      }).then((qResult) => {
-        const counties = qResult.features
-          .map(f => f.attributes.COUNTY as string)
-          .filter(Boolean)
-          .sort()
-        setCountyOptions(counties)
-        setLoadingCounties(false)
-      }).catch(() => setLoadingCounties(false))
-    }).catch(() => setLoadingCounties(false))
-  }, [dsId])
+      })
+
+      const counties = qResult.features
+        .map(f => f.attributes.COUNTY as string)
+        .filter(Boolean)
+        .sort()
+      setCountyOptions(counties)
+    } catch (e) {
+      console.error('[PMQuery] county load failed', e)
+    } finally {
+      setLoadingCounties(false)
+    }
+  }, [])
 
   // ── Map view handler ───────────────────────────────────────────────────────
   const handleActiveViewChange = React.useCallback((jimuMapView: JimuMapView) => {
     jimuMapViewRef.current = jimuMapView
   }, [])
 
-  // ── Ensure graphics layer exists on map ────────────────────────────────────
+  // ── Ensure graphics layer on map ───────────────────────────────────────────
   const ensureGraphicsLayer = React.useCallback(async (): Promise<__esri.GraphicsLayer | null> => {
     const mapView = jimuMapViewRef.current?.view
     if (!mapView) return null
 
-    // Reuse existing layer if already on the map
     const existing = mapView.map.findLayerById(GRAPHICS_LAYER_ID) as __esri.GraphicsLayer
     if (existing) {
       graphicsLayerRef.current = existing
@@ -267,11 +264,7 @@ export default function Widget (props: AllWidgetProps<IMConfig>) {
     }
 
     const [GraphicsLayer] = await loadArcGISJSAPIModules(['esri/layers/GraphicsLayer'])
-    const layer = new GraphicsLayer({
-      id: GRAPHICS_LAYER_ID,
-      title: 'PMQuery Route',
-      listMode: 'hide'
-    })
+    const layer = new GraphicsLayer({ id: GRAPHICS_LAYER_ID, title: 'PMQuery Route', listMode: 'hide' })
     mapView.map.add(layer)
     graphicsLayerRef.current = layer
     return layer
@@ -282,16 +275,11 @@ export default function Widget (props: AllWidgetProps<IMConfig>) {
     graphicsLayerRef.current?.removeAll()
   }, [])
 
-  // ── Draw polyline through sorted points ────────────────────────────────────
+  // ── Draw polyline through PM-sorted points ─────────────────────────────────
   const drawLine = React.useCallback(async (features: __esri.Graphic[]) => {
-    const mapView = jimuMapViewRef.current?.view
-    if (!mapView || features.length < 2) return
+    if (!jimuMapViewRef.current?.view || features.length < 2) return
 
-    const [Graphic, Polyline] = await loadArcGISJSAPIModules([
-      'esri/Graphic',
-      'esri/geometry/Polyline'
-    ])
-
+    const [Graphic, Polyline] = await loadArcGISJSAPIModules(['esri/Graphic', 'esri/geometry/Polyline'])
     const layer = await ensureGraphicsLayer()
     if (!layer) return
 
@@ -302,56 +290,38 @@ export default function Widget (props: AllWidgetProps<IMConfig>) {
       return [pt.x, pt.y]
     })
 
-    const polyline = new Polyline({
-      paths: [path],
-      spatialReference: features[0].geometry.spatialReference
-    })
+    const polyline = new Polyline({ paths: [path], spatialReference: features[0].geometry.spatialReference })
 
-    const lineGraphic = new Graphic({
-      geometry: polyline,
-      symbol: {
-        type: 'simple-line',
-        color: config.lineColor || '#FF6B00',
-        width: config.lineWidth ?? 5,
-        style: 'solid',
-        cap: 'round',
-        join: 'round'
-      }
-    })
+    layer.addMany([
+      new Graphic({
+        geometry: polyline,
+        symbol: { type: 'simple-line', color: config.lineColor || '#FF6B00', width: config.lineWidth ?? 5, style: 'solid', cap: 'round', join: 'round' }
+      }),
+      new Graphic({
+        geometry: features[0].geometry,
+        symbol: { type: 'simple-marker', color: '#34d399', size: 10, outline: { color: 'white', width: 1.5 } }
+      }),
+      new Graphic({
+        geometry: features[features.length - 1].geometry,
+        symbol: { type: 'simple-marker', color: '#D2333F', size: 10, outline: { color: 'white', width: 1.5 } }
+      })
+    ])
 
-    // Green start marker
-    const startGraphic = new Graphic({
-      geometry: features[0].geometry,
-      symbol: {
-        type: 'simple-marker',
-        color: '#34d399',
-        size: 10,
-        outline: { color: 'white', width: 1.5 }
-      }
-    })
-
-    // Red end marker
-    const endGraphic = new Graphic({
-      geometry: features[features.length - 1].geometry,
-      symbol: {
-        type: 'simple-marker',
-        color: '#D2333F',
-        size: 10,
-        outline: { color: 'white', width: 1.5 }
-      }
-    })
-
-    layer.addMany([lineGraphic, startGraphic, endGraphic])
-
-    await mapView.goTo({ target: polyline }, { animate: true, duration: 800 })
+    await jimuMapViewRef.current.view.goTo({ target: polyline }, { animate: true, duration: 800 })
   }, [config.lineColor, config.lineWidth, ensureGraphicsLayer])
 
   // ── Execute query ──────────────────────────────────────────────────────────
+  // Uses query-simple's proven pattern: getOriginDataSources()[0] →
+  // createJSAPILayerByDataSource() → queryFeatures() directly. No ds.load().
   const handleSearch = React.useCallback(async () => {
     setError(null)
     setResult(null)
     clearLine()
 
+    if (!dsRef.current) {
+      setError(getI18nMessage('errorNoLayer'))
+      return
+    }
     if (!jimuMapViewRef.current) {
       setError(getI18nMessage('errorNoMap'))
       return
@@ -370,11 +340,9 @@ export default function Widget (props: AllWidgetProps<IMConfig>) {
     setSearching(true)
 
     try {
-      const ds = DataSourceManager.getInstance().getDataSource(dsId) as FeatureLayerDataSource
-
-      await ds.load()
-      const layer = (ds as any).layer as __esri.FeatureLayer
-      if (!layer) throw new Error('Layer not available')
+      const originDS = dsRef.current.getOriginDataSources()[0] as FeatureLayerDataSource
+      const featureLayer = await originDS.createJSAPILayerByDataSource() as __esri.FeatureLayer
+      await featureLayer.load()
 
       const where = [
         `DISTRICT = '${DISTRICT}'`,
@@ -384,7 +352,7 @@ export default function Widget (props: AllWidgetProps<IMConfig>) {
         `PM <= ${ePM}`
       ].join(' AND ')
 
-      const queryResult = await layer.queryFeatures({
+      const queryResult = await featureLayer.queryFeatures({
         where,
         outFields: ['*'],
         returnGeometry: true,
@@ -401,19 +369,12 @@ export default function Widget (props: AllWidgetProps<IMConfig>) {
       const first = features[0].attributes
       const last = features[features.length - 1].attributes
 
-      // All fields from first feature except PM/OBJECTID/FID
       const fieldEntries = Object.entries(first)
         .filter(([key]) => key !== 'PM' && key !== 'OBJECTID' && key !== 'FID')
-        .map(([key, value]) => ({
-          label: key,
-          value: value != null ? String(value) : '—'
-        }))
-
-      // PM merged as "begin – end" at top
-      const pmEntry = { label: 'PM', value: `${first.PM} – ${last.PM}` }
+        .map(([key, value]) => ({ label: key, value: value != null ? String(value) : '—' }))
 
       setResult({
-        fields: [pmEntry, ...fieldEntries],
+        fields: [{ label: 'PM', value: `${first.PM} – ${last.PM}` }, ...fieldEntries],
         pointCount: features.length,
         route: String(first.ROUTE ?? route),
         county: String(first.COUNTY ?? county)
@@ -426,9 +387,9 @@ export default function Widget (props: AllWidgetProps<IMConfig>) {
     }
 
     setSearching(false)
-  }, [dsId, county, route, beginPM, endPM, clearLine, drawLine, getI18nMessage])
+  }, [county, route, beginPM, endPM, clearLine, drawLine, getI18nMessage])
 
-  // ── Clear handler ──────────────────────────────────────────────────────────
+  // ── Clear ──────────────────────────────────────────────────────────────────
   const handleClear = React.useCallback(() => {
     setCounty('')
     setRoute('')
@@ -440,13 +401,20 @@ export default function Widget (props: AllWidgetProps<IMConfig>) {
   }, [clearLine])
 
   // ─── Render ────────────────────────────────────────────────────────────────
-  if (!dsId) {
+  if (!config.useDataSource?.dataSourceId) {
     return <WidgetPlaceholder widgetId={id} name={widgetLabel} />
   }
 
   return (
     <Paper variant='flat' className='jimu-widget runtime-pmquery' css={widgetStyle}>
-      {/* Hidden map view connector — same pattern as query-simple */}
+      {/* DataSourceComponent manages the DS lifecycle — same pattern as query-simple.
+          Never call ds.load() manually; wait for onDataSourceCreated. */}
+      <DataSourceComponent
+        useDataSource={config.useDataSource}
+        onDataSourceCreated={handleDataSourceCreated}
+      />
+
+      {/* Map view connector */}
       {config.mapWidgetId && (
         <JimuMapViewComponent
           useMapWidgetId={config.mapWidgetId}
@@ -454,22 +422,20 @@ export default function Widget (props: AllWidgetProps<IMConfig>) {
         />
       )}
 
-      {/* Header — matches query-simple's widget-header style */}
+      {/* Header — matches query-simple widget-header */}
       <div className='pmq-header'>
         <h3>{label || widgetLabel}</h3>
       </div>
 
       {/* Scrollable body */}
       <div className='pmq-body'>
-        {/* District badge */}
+        {/* District — fixed */}
         <div className='pmq-field'>
           <label>{getI18nMessage('district')}</label>
-          <div className='pmq-district-badge'>
-            District {DISTRICT} — Fixed
-          </div>
+          <div className='pmq-district-badge'>District {DISTRICT} — Fixed</div>
         </div>
 
-        {/* County dropdown */}
+        {/* County */}
         <div className='pmq-field'>
           <label>{getI18nMessage('county')}</label>
           <Select
@@ -496,7 +462,7 @@ export default function Widget (props: AllWidgetProps<IMConfig>) {
             onChange={e => setRoute(e.target.value)}
             placeholder='e.g. 1, 101, 405'
             disabled={searching}
-            onKeyDown={e => { if (e.key === 'Enter') handleSearch() }}
+            onKeyDown={e => { if (e.key === 'Enter') void handleSearch() }}
           />
         </div>
 
@@ -511,7 +477,7 @@ export default function Widget (props: AllWidgetProps<IMConfig>) {
               onChange={e => setBeginPM(e.target.value)}
               placeholder='0.00'
               disabled={searching}
-              onKeyDown={e => { if (e.key === 'Enter') handleSearch() }}
+              onKeyDown={e => { if (e.key === 'Enter') void handleSearch() }}
             />
           </div>
           <div className='pmq-field'>
@@ -523,12 +489,12 @@ export default function Widget (props: AllWidgetProps<IMConfig>) {
               onChange={e => setEndPM(e.target.value)}
               placeholder='0.00'
               disabled={searching}
-              onKeyDown={e => { if (e.key === 'Enter') handleSearch() }}
+              onKeyDown={e => { if (e.key === 'Enter') void handleSearch() }}
             />
           </div>
         </div>
 
-        {/* Error alert — inline in body so it scrolls with content */}
+        {/* Error */}
         {error && (
           <Alert
             type='warning'
@@ -562,12 +528,12 @@ export default function Widget (props: AllWidgetProps<IMConfig>) {
         )}
       </div>
 
-      {/* Actions — pinned above footer, same pattern as query-simple */}
+      {/* Actions — pinned above footer */}
       <div className='pmq-actions'>
         <Button
           type='primary'
           size='sm'
-          onClick={handleSearch}
+          onClick={() => void handleSearch()}
           disabled={searching || !county || !route || !beginPM || !endPM}
           css={css`flex: 1;`}
         >
@@ -586,7 +552,7 @@ export default function Widget (props: AllWidgetProps<IMConfig>) {
         </Button>
       </div>
 
-      {/* Footer — matches query-simple's stationary footer */}
+      {/* Footer — matches query-simple stationary footer */}
       <div className='pmq-footer'>
         <span>PMQuery — District {DISTRICT}</span>
       </div>
