@@ -504,6 +504,46 @@ export default class Setting extends React.PureComponent<AllWidgetSettingProps<I
           </SettingSection>
         )}
         {this.props.config.queryItems.length > 0 && (
+          <SettingSection role='group' aria-label={this.getI18nMessage('connectPointsAsLine')} title={this.getI18nMessage('connectPointsAsLine')}>
+            <SettingRow label={this.getI18nMessage('connectPointsAsLine')}>
+              <Switch
+                checked={config.connectPointsAsLine === true}
+                onChange={(e) => {
+                  this.updateConfigForOptions(['connectPointsAsLine', e.target.checked])
+                }}
+                aria-label={this.getI18nMessage('connectPointsAsLine')}
+              />
+            </SettingRow>
+            <div css={css`font-size: 0.875rem; margin-top: 4px; padding: 0 16px 8px; opacity: 0.8;`}>
+              {this.getI18nMessage('connectPointsAsLineDescription')}
+            </div>
+            {config.connectPointsAsLine && (
+              <>
+                <SettingRow label={this.getI18nMessage('lineConnectColor')} flow='wrap'>
+                  <ThemeColorPicker
+                    specificTheme={this.props.theme2}
+                    value={config.lineConnectColor || '#FF6B00'}
+                    onChange={(color: string) => {
+                      this.updateConfigForOptions(['lineConnectColor', color])
+                    }}
+                  />
+                </SettingRow>
+                <SettingRow label={this.getI18nMessage('lineConnectWidth')} flow='wrap'>
+                  <NumericInput
+                    value={config.lineConnectWidth ?? 5}
+                    min={1}
+                    max={20}
+                    step={1}
+                    onChange={(value: number) => {
+                      this.updateConfigForOptions(['lineConnectWidth', value])
+                    }}
+                  />
+                </SettingRow>
+              </>
+            )}
+          </SettingSection>
+        )}
+        {this.props.config.queryItems.length > 0 && (
           <SettingSection role='group' aria-label={this.getI18nMessage('hoverPinColor')} title={this.getI18nMessage('hoverPinColor')}>
             <SettingRow label={this.getI18nMessage('pinColor')} flow='wrap'>
               <ThemeColorPicker

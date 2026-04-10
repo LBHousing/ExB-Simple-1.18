@@ -102,6 +102,11 @@ export default {
   spatialResultDefault: 'Use as spatial result template',
   spatialOnly: 'Spatial only',
   spatialOnlyDescription: 'This layer participates in spatial queries but is hidden from the Query tab.',
+  // Connect Points as Line
+  connectPointsAsLine: 'Connect points as line',
+  connectPointsAsLineDescription: 'After each query, draw a line connecting returned point features in order. Useful for route or corridor queries.',
+  lineConnectColor: 'Line color',
+  lineConnectWidth: 'Line width (px)',
   spatialDrawColors: 'Spatial draw colors',
   drawColor: 'Draw color',
   bufferColor: 'Buffer color',

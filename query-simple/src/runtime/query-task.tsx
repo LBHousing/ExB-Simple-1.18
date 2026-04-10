@@ -114,6 +114,8 @@ export interface QueryTaskProps {
   panOnResultClick?: boolean
   isPanelVisible?: boolean  // r025.013: Buffer preview clear/restore on panel close/open
   jimuMapView?: JimuMapView | null  // r025.041: JimuMapView for JimuDraw in Spatial tab Draw mode
+  /** Optional callback: draw a polyline through point features after a successful query */
+  onDrawConnectLine?: (features: __esri.Graphic[]) => Promise<void>
 }
 
 // Helper function to get display name for query in dropdown
@@ -969,7 +971,8 @@ export function QueryTask (props: QueryTaskProps) {
       queryItem, queryItems, currentItem, resultsMode, accumulatedRecords,
       graphicsLayer, mapView, eventManager, initialInputValue,
       onAccumulatedRecordsChange, onHashParameterUsed,
-      clearResult, zoomToRecords
+      clearResult, zoomToRecords,
+      onDrawConnectLine: props.onDrawConnectLine
     }, sqlExpr, spatialFilter, runtimeZoomToSelected)
   }, [currentItem, queryItem, props.widgetId, outputDS, publishDataClearedMsg, clearResult, resultsMode, accumulatedRecords, onAccumulatedRecordsChange, onClearGraphicsLayer, mapView, zoomToRecords])
 

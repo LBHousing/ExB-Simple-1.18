@@ -104,6 +104,8 @@ export interface QueryExecutionContext {
   // Internal callbacks
   clearResult: (reason?: string) => Promise<void>
   zoomToRecords: (records: FeatureDataRecord[]) => Promise<void>
+  /** Optional: called after successful point-feature query when connectPointsAsLine is on */
+  onDrawConnectLine?: (features: __esri.Graphic[]) => Promise<void>
 }
 
 // ---------------------------------------------------------------------------
@@ -135,7 +137,7 @@ export async function executeQueryInternal (
     lastQueryResultCountRef, queryParamRef, widgetId, queryItem, queryItems,
     currentItem, resultsMode, accumulatedRecords, graphicsLayer, mapView,
     eventManager, initialInputValue, onAccumulatedRecordsChange,
-    onHashParameterUsed, clearResult, zoomToRecords
+    onHashParameterUsed, clearResult, zoomToRecords, onDrawConnectLine
   } = ctx
 
   // Clear previous errors when starting a new query
@@ -739,6 +741,19 @@ export async function executeQueryInternal (
       }
 
       recordsRef.current = recordsToDisplay
+
+      // Connect points as line — draw polyline through point features in result order
+      if (onDrawConnectLine && recordsToDisplay && recordsToDisplay.length >= 2) {
+        const pointFeatures = (recordsToDisplay as FeatureDataRecord[])
+          .map(r => (r as any).feature as __esri.Graphic)
+          .filter(g => g?.geometry?.type === 'point')
+        if (pointFeatures.length >= 2) {
+          onDrawConnectLine(pointFeatures).catch(e => {
+            console.error('[QuerySimple] connect-line draw failed', e)
+          })
+        }
+      }
+
       // Reset selection flag for new query results
       hasSelectedRecordsRef.current = false
 

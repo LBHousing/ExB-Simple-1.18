@@ -238,6 +238,13 @@ export interface SettingConfig {
   mobilePopupHideDockButton?: boolean
   /** Hide the popup action bar (zoom-to, etc.) on mobile viewports ≤ 600px (default false) */
   mobilePopupHideActionBar?: boolean
+  // Connect Points as Line
+  /** When true, a polyline is drawn connecting returned point features in query order after each successful query. */
+  connectPointsAsLine?: boolean
+  /** Hex color for the connect-points line. Default: '#FF6B00' (orange). */
+  lineConnectColor?: string
+  /** Width in pixels for the connect-points line. Default: 5. */
+  lineConnectWidth?: number
   sizeMap?: {
     arrangementIconPopper?: SizeMap
   }

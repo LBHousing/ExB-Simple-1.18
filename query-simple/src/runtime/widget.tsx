@@ -970,7 +970,67 @@ export default class Widget extends React.PureComponent<AllWidgetProps<IMConfig>
     }
   }
 
+  /**
+   * Draws a polyline connecting point features in order after a successful query.
+   * Only fires when config.connectPointsAsLine is true.
+   * Uses a dedicated GraphicsLayer (id: 'querysimple-connect-line') separate from
+   * the highlight layer so it doesn't interfere with selection graphics.
+   */
+  public drawConnectLine = async (features: __esri.Graphic[]): Promise<void> => {
+    const { config } = this.props
+    if (!config.connectPointsAsLine) return
 
+    const mapView = this.mapViewRef.current
+    if (!mapView || features.length < 2) return
+
+    const { loadArcGISJSAPIModules } = await import('jimu-arcgis')
+    const [Graphic, Polyline, GraphicsLayer] = await loadArcGISJSAPIModules([
+      'esri/Graphic',
+      'esri/geometry/Polyline',
+      'esri/layers/GraphicsLayer'
+    ])
+
+    // Get or create a dedicated layer for the connect line
+    const layerId = 'querysimple-connect-line'
+    let layer = mapView.map.findLayerById(layerId) as __esri.GraphicsLayer
+    if (!layer) {
+      layer = new GraphicsLayer({ id: layerId, title: 'Route Line', listMode: 'hide' })
+      mapView.map.add(layer)
+    }
+    layer.removeAll()
+
+    const path = features.map(f => {
+      const pt = f.geometry as __esri.Point
+      return [pt.x, pt.y]
+    })
+
+    const polyline = new Polyline({
+      paths: [path],
+      spatialReference: features[0].geometry.spatialReference
+    })
+
+    layer.addMany([
+      new Graphic({
+        geometry: polyline,
+        symbol: {
+          type: 'simple-line',
+          color: config.lineConnectColor || '#FF6B00',
+          width: config.lineConnectWidth ?? 5,
+          style: 'solid',
+          cap: 'round',
+          join: 'round'
+        }
+      }),
+      new Graphic({
+        geometry: features[0].geometry,
+        symbol: { type: 'simple-marker', color: '#34d399', size: 10, outline: { color: 'white', width: 1.5 } }
+      }),
+      new Graphic({
+        geometry: features[features.length - 1].geometry,
+        symbol: { type: 'simple-marker', color: '#D2333F', size: 10, outline: { color: 'white', width: 1.5 } }
+      })
+    ])
+  }
 
   /**
    * Handles selection change events from QueryTaskResult component.
@@ -1460,6 +1520,7 @@ export default class Widget extends React.PureComponent<AllWidgetProps<IMConfig>
                 hoverPinColor={config.hoverPinColor}
                 isPanelVisible={this.state.isPanelVisible}
                 jimuMapView={this.state.jimuMapView}
+                onDrawConnectLine={this.drawConnectLine}
               />
             </QueryWidgetContext.Provider>
           </div>
