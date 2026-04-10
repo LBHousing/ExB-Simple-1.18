@@ -534,19 +534,9 @@ export function SpatialTabContent (props: SpatialTabContentProps) {
   // Track whether user has manually chosen a mode this session
   const userHasChosenModeRef = React.useRef(false)
 
-  // Calcite combobox ref — web component events require addEventListener (not React onChange)
-  const spatialRelComboboxRef = React.useRef<any>(null)
-
-  React.useEffect(() => {
-    const el = spatialRelComboboxRef.current
-    if (!el) return
-
-    const handleChange = () => {
-      setSelectedRelationship(el.value || null)
-    }
-
-    el.addEventListener('calciteComboboxChange', handleChange)
-    return () => el.removeEventListener('calciteComboboxChange', handleChange)
+  // jimu-ui Select onChange handler (replaces calcite-combobox for 1.18 compatibility)
+  const handleRelationshipChange = React.useCallback((e: React.ChangeEvent<HTMLSelectElement>) => {
+    setSelectedRelationship(e.target.value || null)
   }, [])
 
   const handleModeChange = React.useCallback((mode: SpatialMode) => {
@@ -841,26 +831,20 @@ export function SpatialTabContent (props: SpatialTabContentProps) {
             <p css={disabledHintStyle}>{getI18nMessage('spatialNoResults')}</p>
           )}
           <div css={css`display: flex; align-items: center; gap: 4px;`}>
-            <calcite-combobox
-              ref={spatialRelComboboxRef}
-              selectionMode='single'
-              placeholder='Search or select a relationship...'
-              disabled={!operationsEnabled || undefined}
-              scale='m'
-              overlayPositioning='fixed'
-              label={getI18nMessage('spatialRelationship')}
+            <Select
+              value={selectedRelationship ?? ''}
+              onChange={handleRelationshipChange}
+              disabled={!operationsEnabled}
+              placeholder='Select a relationship...'
               css={css`flex: 1;`}
             >
+              <Option value=''>Select a relationship...</Option>
               {spatialRelationships.map((rel) => (
-                <calcite-combobox-item
-                  key={rel.id}
-                  value={rel.id}
-                  textLabel={rel.label}
-                  description={rel.description}
-                  selected={selectedRelationship === rel.id || undefined}
-                />
+                <Option key={rel.id} value={rel.id} title={rel.description}>
+                  {rel.label}
+                </Option>
               ))}
-            </calcite-combobox>
+            </Select>
             {/* r025.069: Info icon — hover shows spatial relationship diagram popover */}
             {selectedRelationship && (
               <div
