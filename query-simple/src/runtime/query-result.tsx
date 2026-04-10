@@ -23,7 +23,7 @@ import {
   DataLevel,
   useIntl
 } from 'jimu-core'
-import { Button, Icon, Tooltip } from 'jimu-ui'
+import { Alert, Button, Icon, Tooltip } from 'jimu-ui'
 import { ResultsMenu } from './results-menu'
 import { getWidgetRuntimeDataMap } from './widget-config'
 import { type QueryItemType, FieldsType, PagingType, ListDirection, ResultSelectMode, SelectionType } from '../config'
@@ -1228,76 +1228,27 @@ export function QueryTaskResult (props: QueryTaskResultProps) {
         `}
       />
       
-      {/* r022.15: Calcite Popover for Remove mode feedback (query found records but none matched) */}
+      {/* 1.18 compat: jimu-ui Alert replaces calcite-popover */}
       {noRemovalAlert?.show && (
-        <calcite-popover 
+        <Alert
           key={`no-removal-${noRemovalAlert.timestamp}`}
-          referenceElement="remove-feedback-anchor"
-          placement="top"
-          flipDisabled={true}
-          overlayPositioning="fixed"
-          triggerDisabled={true}
-          autoClose
+          type='warning'
           closable
-          label={getI18nMessage('noRemovalAlertLabel')}
-          open={noRemovalAlert.show}
-          onCalcitePopoverClose={() => {
-            if (onDismissNoRemovalAlert) {
-              onDismissNoRemovalAlert()
-            }
-          }}
-          style={{
-            '--calcite-popover-max-size-x': '320px',
-            maxWidth: '320px',
-            width: '100%',
-            '--calcite-color-foreground-1': 'lightyellow'
-          } as React.CSSProperties}
-        >
-          <div style={{ padding: '12px', maxWidth: '320px' }}>
-            <div style={{ fontWeight: 600, marginBottom: '8px', fontSize: '14px', color: '#151515' }}>
-              {getI18nMessage('noRemovalAlertTitle')}
-            </div>
-            <div style={{ fontSize: '13px', lineHeight: '1.5', color: '#2b2b2b' }}>
-              {getI18nMessage('noRemovalAlertMessage', { recordsFound: noRemovalAlert.recordsFound })}
-            </div>
-          </div>
-        </calcite-popover>
+          onClose={onDismissNoRemovalAlert}
+          css={css`margin-top: 8px; width: 100%;`}
+          text={`${getI18nMessage('noRemovalAlertTitle')}: ${getI18nMessage('noRemovalAlertMessage', { recordsFound: noRemovalAlert.recordsFound })}`}
+        />
       )}
-      
-      {/* r022.21: Calcite Popover for Add mode feedback (all records are duplicates) */}
+
       {allDuplicatesAlert?.show && (
-        <calcite-popover 
+        <Alert
           key={`all-duplicates-${allDuplicatesAlert.timestamp}`}
-          referenceElement="remove-feedback-anchor"
-          placement="top"
-          flipDisabled={true}
-          overlayPositioning="fixed"
-          triggerDisabled={true}
-          autoClose
+          type='warning'
           closable
-          label={getI18nMessage('allDuplicatesAlertLabel')}
-          open={allDuplicatesAlert.show}
-          onCalcitePopoverClose={() => {
-            if (onDismissAllDuplicatesAlert) {
-              onDismissAllDuplicatesAlert()
-            }
-          }}
-          style={{
-            '--calcite-popover-max-size-x': '320px',
-            maxWidth: '320px',
-            width: '100%',
-            '--calcite-color-foreground-1': 'lightyellow'
-          } as React.CSSProperties}
-        >
-          <div style={{ padding: '12px', maxWidth: '320px' }}>
-            <div style={{ fontWeight: 600, marginBottom: '8px', fontSize: '14px', color: '#151515' }}>
-              {getI18nMessage('allDuplicatesAlertTitle')}
-            </div>
-            <div style={{ fontSize: '13px', lineHeight: '1.5', color: '#2b2b2b' }}>
-              {getI18nMessage('allDuplicatesAlertMessage', { recordsFound: allDuplicatesAlert.recordsFound })}
-            </div>
-          </div>
-        </calcite-popover>
+          onClose={onDismissAllDuplicatesAlert}
+          css={css`margin-top: 8px; width: 100%;`}
+          text={`${getI18nMessage('allDuplicatesAlertTitle')}: ${getI18nMessage('allDuplicatesAlertMessage', { recordsFound: allDuplicatesAlert.recordsFound })}`}
+        />
       )}
     </div>
   )

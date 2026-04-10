@@ -33,7 +33,7 @@ import {
   type FeatureLayerDataSource,
   type FeatureDataRecord
 } from 'jimu-core'
-import { Button, Select, Option, TextInput, Tooltip, AdvancedSelect } from 'jimu-ui'
+import { Alert, Button, Select, Option, TextInput, Tooltip, AdvancedSelect } from 'jimu-ui'
 import { loadArcGISJSAPIModules, type JimuMapView } from 'jimu-arcgis'
 import type * as jimuMap from 'jimu-ui/advanced/map'
 import { TrashOutlined } from 'jimu-icons/outlined/editor/trash'
@@ -248,7 +248,7 @@ export function SpatialTabContent (props: SpatialTabContentProps) {
   const [bufferDistance, setBufferDistance] = React.useState('')
   const [bufferUnit, setBufferUnit] = React.useState('feet')
   const [selectedLayers, setSelectedLayers] = React.useState<Array<{ value: string | number; label: string }>>([])
-  const [showRelInfo, setShowRelInfo] = React.useState(false) // r025.069: Hover-driven spatial relationship info popover
+  // showRelInfo removed — 1.18 compat: Tooltip handles hover state natively
 
   // r025.041: JimuDraw module (lazy-loaded) and drawn geometry state
   const [mapModule, setMapModule] = React.useState<typeof jimuMap>(null)
@@ -857,41 +857,25 @@ export function SpatialTabContent (props: SpatialTabContentProps) {
               </div>
             )}
           </div>
-          {/* r025.069: Spatial relationship info popover — hover-driven, pops above */}
+          {/* 1.18 compat: relationship info shown inline via Tooltip instead of calcite-popover */}
           {selectedRelationship && (
-            <calcite-popover
-              referenceElement='spatial-rel-info-btn'
+            <Tooltip
+              title={
+                <div css={css`padding: 4px; max-width: 280px;`}>
+                  <div css={css`font-weight: 600; margin-bottom: 4px; font-size: 0.8125rem;`}>
+                    {spatialRelationships.find(r => r.id === selectedRelationship)?.label ?? 'Spatial Relationship'}
+                  </div>
+                  <div css={css`font-size: 0.8rem; line-height: 1.4;`}>
+                    {spatialRelationshipDiagrams[selectedRelationship]?.caption ?? spatialRelationships.find(r => r.id === selectedRelationship)?.description ?? ''}
+                  </div>
+                </div>
+              }
               placement='top'
-              open={showRelInfo || undefined}
-              overlayPositioning='fixed'
-              triggerDisabled
-              pointerDisabled
-              css={css`
-                --calcite-popover-border-color: var(--ref-palette-neutral-400);
-                --calcite-color-foreground-1: var(--ref-palette-white);
-                filter: drop-shadow(0 4px 12px rgba(0, 0, 0, 0.15));
-              `}
             >
-              <div
-                css={css`padding: 10px 12px; max-width: 320px;`}
-                onMouseEnter={() => setShowRelInfo(true)}
-                onMouseLeave={() => setShowRelInfo(false)}
-              >
-                <h5 css={css`margin: 0 0 6px; font-size: 0.8125rem; font-weight: 600;`}>
-                  {spatialRelationships.find(r => r.id === selectedRelationship)?.label ?? 'Spatial Relationship'}
-                </h5>
-                {spatialRelationshipDiagrams[selectedRelationship]?.svg && (
-                  <img
-                    src={spatialRelationshipDiagrams[selectedRelationship].svg}
-                    alt={spatialRelationships.find(r => r.id === selectedRelationship)?.label ?? ''}
-                    css={css`width: 100%; max-width: 288px; margin-bottom: 6px;`}
-                  />
-                )}
-                <p css={css`margin: 0; font-size: 0.8rem; color: var(--ref-palette-neutral-1000); line-height: 1.4;`}>
-                  {spatialRelationshipDiagrams[selectedRelationship]?.caption ?? ''}
-                </p>
-              </div>
-            </calcite-popover>
+              <Button size='sm' icon type='tertiary' id='spatial-rel-info-btn'>
+                <InfoOutlined color='var(--sys-color-primary-main)' size='s' />
+              </Button>
+            </Tooltip>
           )}
         </div>
 
@@ -1018,74 +1002,27 @@ export function SpatialTabContent (props: SpatialTabContentProps) {
         {/* r025.063: Centered invisible anchor for popover alignment */}
         <div id='spatial-feedback-anchor' css={css`height: 0; width: 100%;`} />
 
-        {/* r025.031: Calcite popover for spatial query errors — same pattern as Query tab */}
+        {/* 1.18 compat: jimu-ui Alert replaces calcite-popover */}
         {queryErrorAlert?.show && (
-          <calcite-popover
+          <Alert
             key={`spatial-error-${queryErrorAlert.timestamp}`}
-            referenceElement="spatial-feedback-anchor"
-            placement="top"
-            flipDisabled={true}
-            overlayPositioning="fixed"
-            triggerDisabled={true}
-            autoClose
+            type='error'
             closable
-            label={getI18nMessage('queryErrorAlertLabel')}
-            open={queryErrorAlert.show}
-            onCalcitePopoverClose={() => {
-              if (onDismissQueryErrorAlert) onDismissQueryErrorAlert()
-            }}
-            style={{
-              '--calcite-popover-max-size-x': '320px',
-              maxWidth: '320px',
-              width: '100%',
-              '--calcite-color-foreground-1': '#fef2f2'
-            } as React.CSSProperties}
-          >
-            <div style={{ padding: '12px', maxWidth: '320px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 600, marginBottom: '8px', fontSize: '14px', color: '#991b1b' }}>
-                <calcite-icon icon="exclamation-mark-triangle" scale="s" style={{ color: '#dc2626' }} />
-                Spatial query failed
-              </div>
-              <div style={{ fontSize: '13px', lineHeight: '1.5', color: '#2b2b2b' }}>
-                {queryErrorAlert?.errorMessage || getI18nMessage('queryErrorAlertMessage')}
-              </div>
-            </div>
-          </calcite-popover>
+            onClose={onDismissQueryErrorAlert}
+            css={css`margin-top: 8px; width: 100%;`}
+            text={queryErrorAlert?.errorMessage || getI18nMessage('queryErrorAlertMessage')}
+          />
         )}
 
-        {/* r025.034: Calcite popover for zero spatial results — same pattern as Query tab */}
         {noResultsAlert?.show && (
-          <calcite-popover
+          <Alert
             key={`spatial-no-results-${noResultsAlert.timestamp}`}
-            referenceElement="spatial-feedback-anchor"
-            placement="top"
-            flipDisabled={true}
-            overlayPositioning="fixed"
-            triggerDisabled={true}
-            autoClose
+            type='warning'
             closable
-            label={getI18nMessage('noResultsAlertLabel')}
-            open={noResultsAlert.show}
-            onCalcitePopoverClose={() => {
-              if (onDismissNoResultsAlert) onDismissNoResultsAlert()
-            }}
-            style={{
-              '--calcite-popover-max-size-x': '320px',
-              maxWidth: '320px',
-              width: '100%',
-              '--calcite-color-foreground-1': '#fffbeb'
-            } as React.CSSProperties}
-          >
-            <div style={{ padding: '12px', maxWidth: '320px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 600, marginBottom: '8px', fontSize: '14px', color: '#92400e' }}>
-                <calcite-icon icon="information" scale="s" style={{ color: '#d97706' }} />
-                {getI18nMessage('noResultsAlertTitle')}
-              </div>
-              <div style={{ fontSize: '13px', lineHeight: '1.5', color: '#2b2b2b' }}>
-                {getI18nMessage('noResultsAlertMessage')}
-              </div>
-            </div>
-          </calcite-popover>
+            onClose={onDismissNoResultsAlert}
+            css={css`margin-top: 8px; width: 100%;`}
+            text={`${getI18nMessage('noResultsAlertTitle')}: ${getI18nMessage('noResultsAlertMessage')}`}
+          />
         )}
 
       </div>{/* end scrollable content */}

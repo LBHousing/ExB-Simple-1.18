@@ -46,6 +46,7 @@ import {
   type FeatureDataRecord,
   hooks
 } from 'jimu-core'
+import { Alert } from 'jimu-ui'
 import { type QueryItemType, type SpatialFilterObj, SelectionType } from '../../config'
 import { QueryTaskForm } from '../query-task-form'
 import { DataSourceTip, createQuerySimpleDebugLogger } from 'widgets/shared-code/mapsimple-common'
@@ -403,77 +404,27 @@ export function QueryTabContent(props: QueryTabContentProps) {
         `}
       />
       
-      {/* r022.8: Calcite Popover for query feedback (zero results, etc.) */}
+      {/* 1.18 compat: jimu-ui Alert replaces calcite-popover (web component events unreliable in 1.18) */}
       {noResultsAlert?.show && (
-        <calcite-popover 
+        <Alert
           key={`no-results-${noResultsAlert.timestamp}`}
-          referenceElement="query-feedback-anchor"
-          placement="bottom"
-          flipDisabled={true}
-          overlayPositioning="fixed"
-          triggerDisabled={true}
-          autoClose
+          type='warning'
           closable
-          label={getI18nMessage('noResultsAlertLabel')}
-          open={noResultsAlert.show}
-          onCalcitePopoverClose={() => {
-            if (onDismissNoResultsAlert) {
-              onDismissNoResultsAlert()
-            }
-          }}
-          style={{
-            '--calcite-popover-max-size-x': '320px',
-            maxWidth: '320px',
-            width: '100%',
-            '--calcite-color-foreground-1': 'lightyellow'
-          } as React.CSSProperties}
-        >
-          <div style={{ padding: '12px', maxWidth: '320px' }}>
-            <div style={{ fontWeight: 600, marginBottom: '8px', fontSize: '14px', color: '#151515' }}>
-              {getI18nMessage('noResultsAlertTitle')}
-            </div>
-            <div style={{ fontSize: '13px', lineHeight: '1.5', color: '#2b2b2b' }}>
-              {getI18nMessage('noResultsAlertMessage')}
-            </div>
-          </div>
-        </calcite-popover>
+          onClose={onDismissNoResultsAlert}
+          css={css`margin-top: 8px; width: 100%;`}
+          text={`${getI18nMessage('noResultsAlertTitle')}: ${getI18nMessage('noResultsAlertMessage')}`}
+        />
       )}
-      
-      {/* r024.62: Calcite Popover for query execution failure (service down, network error) */}
+
       {queryErrorAlert?.show && (
-        <calcite-popover 
+        <Alert
           key={`query-error-${queryErrorAlert.timestamp}`}
-          referenceElement="query-feedback-anchor"
-          placement="bottom"
-          flipDisabled={true}
-          overlayPositioning="fixed"
-          triggerDisabled={true}
-          autoClose
+          type='error'
           closable
-          label={getI18nMessage('queryErrorAlertLabel')}
-          open={queryErrorAlert.show}
-          onCalcitePopoverClose={() => {
-            if (onDismissQueryErrorAlert) {
-              onDismissQueryErrorAlert()
-            }
-          }}
-          style={{
-            '--calcite-popover-max-size-x': '320px',
-            maxWidth: '320px',
-            width: '100%',
-            '--calcite-color-foreground-1': '#fef2f2'
-          } as React.CSSProperties}
-        >
-          <div style={{ padding: '12px', maxWidth: '320px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 600, marginBottom: '8px', fontSize: '14px', color: '#991b1b' }}>
-              <calcite-icon icon="exclamation-mark-triangle" scale="s" style={{ color: '#dc2626' }} />
-              {getI18nMessage('queryErrorAlertTitle')}
-            </div>
-            <div style={{ fontSize: '13px', lineHeight: '1.5', color: '#2b2b2b' }}>
-              {getI18nMessage('queryErrorAlertMessage')}
-            </div>
-          </div>
-        </calcite-popover>
+          onClose={onDismissQueryErrorAlert}
+          css={css`margin-top: 8px; width: 100%;`}
+          text={`${getI18nMessage('queryErrorAlertTitle')}: ${getI18nMessage('queryErrorAlertMessage')}`}
+        />
       )}
     </div>
   )
