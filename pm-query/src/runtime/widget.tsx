@@ -219,17 +219,13 @@ export default function Widget (props: AllWidgetProps<IMConfig>) {
   const jimuMapViewRef = React.useRef<JimuMapView | null>(null)
   const graphicsLayerRef = React.useRef<__esri.GraphicsLayer | null>(null)
 
-  // ── Guard: show placeholder when not configured ────────────────────────────
-  if (!config.useDataSource?.dataSourceId) {
-    return <WidgetPlaceholder widgetId={id} name={widgetLabel} />
-  }
+  const dsId = config.useDataSource?.dataSourceId
 
   // ── Load county options from layer on mount ────────────────────────────────
-  // eslint-disable-next-line react-hooks/rules-of-hooks
   React.useEffect(() => {
-    const ds = DataSourceManager.getInstance().getDataSource(
-      config.useDataSource.dataSourceId
-    ) as FeatureLayerDataSource
+    if (!dsId) return
+
+    const ds = DataSourceManager.getInstance().getDataSource(dsId) as FeatureLayerDataSource
     if (!ds) return
 
     setLoadingCounties(true)
@@ -251,7 +247,7 @@ export default function Widget (props: AllWidgetProps<IMConfig>) {
         setLoadingCounties(false)
       }).catch(() => setLoadingCounties(false))
     }).catch(() => setLoadingCounties(false))
-  }, [config.useDataSource.dataSourceId])
+  }, [dsId])
 
   // ── Map view handler ───────────────────────────────────────────────────────
   const handleActiveViewChange = React.useCallback((jimuMapView: JimuMapView) => {
@@ -374,9 +370,7 @@ export default function Widget (props: AllWidgetProps<IMConfig>) {
     setSearching(true)
 
     try {
-      const ds = DataSourceManager.getInstance().getDataSource(
-        config.useDataSource.dataSourceId
-      ) as FeatureLayerDataSource
+      const ds = DataSourceManager.getInstance().getDataSource(dsId) as FeatureLayerDataSource
 
       await ds.load()
       const layer = (ds as any).layer as __esri.FeatureLayer
@@ -432,7 +426,7 @@ export default function Widget (props: AllWidgetProps<IMConfig>) {
     }
 
     setSearching(false)
-  }, [config.useDataSource, county, route, beginPM, endPM, clearLine, drawLine, getI18nMessage])
+  }, [dsId, county, route, beginPM, endPM, clearLine, drawLine, getI18nMessage])
 
   // ── Clear handler ──────────────────────────────────────────────────────────
   const handleClear = React.useCallback(() => {
@@ -446,6 +440,10 @@ export default function Widget (props: AllWidgetProps<IMConfig>) {
   }, [clearLine])
 
   // ─── Render ────────────────────────────────────────────────────────────────
+  if (!dsId) {
+    return <WidgetPlaceholder widgetId={id} name={widgetLabel} />
+  }
+
   return (
     <Paper variant='flat' className='jimu-widget runtime-pmquery' css={widgetStyle}>
       {/* Hidden map view connector — same pattern as query-simple */}
