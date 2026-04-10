@@ -16,7 +16,9 @@ import {
   Label,
   Alert,
   Loading,
-  LoadingType
+  LoadingType,
+  Paper,
+  WidgetPlaceholder
 } from 'jimu-ui'
 import { JimuMapViewComponent, type JimuMapView, loadArcGISJSAPIModules } from 'jimu-arcgis'
 import { type IMConfig } from '../config'
@@ -34,18 +36,20 @@ const widgetStyle = css`
   display: flex;
   flex-direction: column;
   height: 100%;
-  background: var(--ref-palette-white);
   overflow: hidden;
 
   .pmq-header {
-    background: #0a0e1a;
-    color: #f1f5f9;
-    padding: 14px 16px 10px;
-    font-size: 13px;
-    font-weight: 600;
-    letter-spacing: 1px;
-    text-transform: uppercase;
+    padding: 6px 16px;
+    border-bottom: 1px solid var(--sys-color-divider-secondary);
+    background-color: var(--sys-color-surface);
     flex-shrink: 0;
+
+    h3 {
+      margin: 0;
+      font-size: 1rem;
+      font-weight: 600;
+      color: var(--sys-color-text-primary);
+    }
   }
 
   .pmq-body {
@@ -55,6 +59,7 @@ const widgetStyle = css`
     display: flex;
     flex-direction: column;
     gap: 12px;
+    background-color: var(--sys-color-surface-paper);
   }
 
   .pmq-field {
@@ -67,7 +72,7 @@ const widgetStyle = css`
       font-weight: 600;
       text-transform: uppercase;
       letter-spacing: 0.5px;
-      color: var(--ref-palette-neutral-1000);
+      color: var(--sys-color-text-primary);
     }
   }
 
@@ -81,64 +86,65 @@ const widgetStyle = css`
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    background: rgba(39,106,219,0.1);
-    border: 1px solid rgba(39,106,219,0.25);
-    border-radius: 6px;
+    background-color: var(--sys-color-action-selected, rgba(0,121,193,0.08));
+    border: 1px solid var(--sys-color-primary-main, #0079c1);
+    border-radius: 4px;
     padding: 6px 12px;
     font-size: 13px;
-    color: #276ADB;
+    color: var(--sys-color-primary-main, #0079c1);
     font-weight: 600;
   }
 
   .pmq-actions {
     display: flex;
     gap: 8px;
-    padding: 0 16px 16px;
+    padding: 8px 16px 12px;
+    background-color: var(--sys-color-surface-paper);
+    border-top: 1px solid var(--sys-color-divider-secondary);
     flex-shrink: 0;
   }
 
   .pmq-result {
     margin: 0 16px 16px;
-    border: 1px solid var(--ref-palette-neutral-300);
-    border-radius: 8px;
+    border: 1px solid var(--sys-color-divider-secondary);
+    border-radius: 4px;
     overflow: hidden;
     flex-shrink: 0;
+    background-color: var(--sys-color-surface-paper);
 
     .pmq-result-header {
-      background: #276ADB;
-      color: white;
-      padding: 10px 14px;
+      background-color: var(--sys-color-primary-main, #0079c1);
+      color: #fff;
+      padding: 8px 14px;
       font-size: 13px;
       font-weight: 600;
     }
 
     .pmq-result-body {
-      padding: 12px 14px;
+      padding: 10px 14px;
       display: flex;
       flex-direction: column;
-      gap: 6px;
     }
 
     .pmq-result-row {
       display: flex;
       justify-content: space-between;
       font-size: 13px;
-      border-bottom: 1px solid var(--ref-palette-neutral-200);
-      padding-bottom: 5px;
+      border-bottom: 1px solid var(--sys-color-divider-secondary);
+      padding: 5px 0;
 
       &:last-child {
         border-bottom: none;
-        padding-bottom: 0;
       }
 
       .pmq-field-label {
-        color: var(--ref-palette-neutral-700);
+        color: var(--sys-color-surface-paper-hint, #666);
         font-weight: 500;
         flex: 0 0 40%;
       }
 
       .pmq-field-value {
-        color: var(--ref-palette-neutral-1100);
+        color: var(--sys-color-surface-paper-text, #333);
         text-align: right;
         flex: 1;
         word-break: break-word;
@@ -148,7 +154,7 @@ const widgetStyle = css`
     .pmq-point-count {
       margin-top: 8px;
       font-size: 11px;
-      color: var(--ref-palette-neutral-600);
+      color: var(--sys-color-text-tertiary);
       text-align: right;
     }
   }
@@ -156,6 +162,21 @@ const widgetStyle = css`
   .pmq-alert {
     margin: 0 16px 12px;
     flex-shrink: 0;
+  }
+
+  .pmq-footer {
+    padding: 4px 12px;
+    border-top: 1px solid var(--sys-color-divider-secondary);
+    background-color: var(--sys-color-surface-paper);
+    flex-shrink: 0;
+    text-align: center;
+
+    span {
+      font-size: 0.75rem;
+      color: var(--sys-color-text-tertiary);
+      font-weight: 400;
+      letter-spacing: 0.025em;
+    }
   }
 `
 
@@ -166,15 +187,18 @@ interface ResultCard {
   pointCount: number
   route: string
   county: string
-  beginPM: string
-  endPM: string
 }
 
 // ─── Widget ───────────────────────────────────────────────────────────────────
 
 export default function Widget (props: AllWidgetProps<IMConfig>) {
-  const { config, id } = props
+  const { config, id, label, intl } = props
   const getI18nMessage = hooks.useTranslation(defaultMessages)
+
+  const widgetLabel = intl.formatMessage({
+    id: '_widgetLabel',
+    defaultMessage: defaultMessages._widgetLabel
+  })
 
   // Form state
   const [county, setCounty] = React.useState('')
@@ -191,13 +215,18 @@ export default function Widget (props: AllWidgetProps<IMConfig>) {
   const [error, setError] = React.useState<string | null>(null)
   const [result, setResult] = React.useState<ResultCard | null>(null)
 
-  // Map view ref
+  // Map view refs
   const jimuMapViewRef = React.useRef<JimuMapView | null>(null)
   const graphicsLayerRef = React.useRef<__esri.GraphicsLayer | null>(null)
 
+  // ── Guard: show placeholder when not configured ────────────────────────────
+  if (!config.useDataSource?.dataSourceId) {
+    return <WidgetPlaceholder widgetId={id} name={widgetLabel} />
+  }
+
   // ── Load county options from layer on mount ────────────────────────────────
+  // eslint-disable-next-line react-hooks/rules-of-hooks
   React.useEffect(() => {
-    if (!config.useDataSource?.dataSourceId) return
     const ds = DataSourceManager.getInstance().getDataSource(
       config.useDataSource.dataSourceId
     ) as FeatureLayerDataSource
@@ -213,8 +242,8 @@ export default function Widget (props: AllWidgetProps<IMConfig>) {
         outFields: ['COUNTY'],
         returnDistinctValues: true,
         orderByFields: ['COUNTY ASC']
-      }).then((result) => {
-        const counties = result.features
+      }).then((qResult) => {
+        const counties = qResult.features
           .map(f => f.attributes.COUNTY as string)
           .filter(Boolean)
           .sort()
@@ -222,7 +251,7 @@ export default function Widget (props: AllWidgetProps<IMConfig>) {
         setLoadingCounties(false)
       }).catch(() => setLoadingCounties(false))
     }).catch(() => setLoadingCounties(false))
-  }, [config.useDataSource?.dataSourceId])
+  }, [config.useDataSource.dataSourceId])
 
   // ── Map view handler ───────────────────────────────────────────────────────
   const handleActiveViewChange = React.useCallback((jimuMapView: JimuMapView) => {
@@ -230,11 +259,16 @@ export default function Widget (props: AllWidgetProps<IMConfig>) {
   }, [])
 
   // ── Ensure graphics layer exists on map ────────────────────────────────────
-  const ensureGraphicsLayer = React.useCallback(async (): Promise<__esri.GraphicsLayer> => {
+  const ensureGraphicsLayer = React.useCallback(async (): Promise<__esri.GraphicsLayer | null> => {
     const mapView = jimuMapViewRef.current?.view
     if (!mapView) return null
 
-    if (graphicsLayerRef.current) return graphicsLayerRef.current
+    // Reuse existing layer if already on the map
+    const existing = mapView.map.findLayerById(GRAPHICS_LAYER_ID) as __esri.GraphicsLayer
+    if (existing) {
+      graphicsLayerRef.current = existing
+      return existing
+    }
 
     const [GraphicsLayer] = await loadArcGISJSAPIModules(['esri/layers/GraphicsLayer'])
     const layer = new GraphicsLayer({
@@ -247,11 +281,9 @@ export default function Widget (props: AllWidgetProps<IMConfig>) {
     return layer
   }, [])
 
-  // ── Clear previous line from map ───────────────────────────────────────────
+  // ── Clear graphics ─────────────────────────────────────────────────────────
   const clearLine = React.useCallback(() => {
-    if (graphicsLayerRef.current) {
-      graphicsLayerRef.current.removeAll()
-    }
+    graphicsLayerRef.current?.removeAll()
   }, [])
 
   // ── Draw polyline through sorted points ────────────────────────────────────
@@ -269,7 +301,6 @@ export default function Widget (props: AllWidgetProps<IMConfig>) {
 
     layer.removeAll()
 
-    // Build path from point geometries sorted by PM
     const path = features.map(f => {
       const pt = f.geometry as __esri.Point
       return [pt.x, pt.y]
@@ -285,14 +316,14 @@ export default function Widget (props: AllWidgetProps<IMConfig>) {
       symbol: {
         type: 'simple-line',
         color: config.lineColor || '#FF6B00',
-        width: config.lineWidth || 5,
+        width: config.lineWidth ?? 5,
         style: 'solid',
         cap: 'round',
         join: 'round'
       }
     })
 
-    // Start point marker
+    // Green start marker
     const startGraphic = new Graphic({
       geometry: features[0].geometry,
       symbol: {
@@ -303,7 +334,7 @@ export default function Widget (props: AllWidgetProps<IMConfig>) {
       }
     })
 
-    // End point marker
+    // Red end marker
     const endGraphic = new Graphic({
       geometry: features[features.length - 1].geometry,
       symbol: {
@@ -316,11 +347,7 @@ export default function Widget (props: AllWidgetProps<IMConfig>) {
 
     layer.addMany([lineGraphic, startGraphic, endGraphic])
 
-    // Zoom to the line extent with padding
-    await mapView.goTo({
-      target: polyline,
-      zoom: undefined
-    }, { animate: true, duration: 800 })
+    await mapView.goTo({ target: polyline }, { animate: true, duration: 800 })
   }, [config.lineColor, config.lineWidth, ensureGraphicsLayer])
 
   // ── Execute query ──────────────────────────────────────────────────────────
@@ -329,10 +356,6 @@ export default function Widget (props: AllWidgetProps<IMConfig>) {
     setResult(null)
     clearLine()
 
-    if (!config.useDataSource?.dataSourceId) {
-      setError(getI18nMessage('errorNoLayer'))
-      return
-    }
     if (!jimuMapViewRef.current) {
       setError(getI18nMessage('errorNoMap'))
       return
@@ -374,7 +397,7 @@ export default function Widget (props: AllWidgetProps<IMConfig>) {
         orderByFields: ['PM ASC']
       })
 
-      if (!queryResult.features || queryResult.features.length === 0) {
+      if (!queryResult.features?.length) {
         setError(getI18nMessage('noResults'))
         setSearching(false)
         return
@@ -384,8 +407,7 @@ export default function Widget (props: AllWidgetProps<IMConfig>) {
       const first = features[0].attributes
       const last = features[features.length - 1].attributes
 
-      // Build result card — all fields from first feature except PM
-      // PM becomes "beginPM - endPM"
+      // All fields from first feature except PM/OBJECTID/FID
       const fieldEntries = Object.entries(first)
         .filter(([key]) => key !== 'PM' && key !== 'OBJECTID' && key !== 'FID')
         .map(([key, value]) => ({
@@ -393,19 +415,14 @@ export default function Widget (props: AllWidgetProps<IMConfig>) {
           value: value != null ? String(value) : '—'
         }))
 
-      // Insert merged PM row at top
-      const pmEntry = {
-        label: 'PM',
-        value: `${first.PM} – ${last.PM}`
-      }
+      // PM merged as "begin – end" at top
+      const pmEntry = { label: 'PM', value: `${first.PM} – ${last.PM}` }
 
       setResult({
         fields: [pmEntry, ...fieldEntries],
         pointCount: features.length,
         route: String(first.ROUTE ?? route),
-        county: String(first.COUNTY ?? county),
-        beginPM: String(first.PM),
-        endPM: String(last.PM)
+        county: String(first.COUNTY ?? county)
       })
 
       await drawLine(features)
@@ -430,8 +447,8 @@ export default function Widget (props: AllWidgetProps<IMConfig>) {
 
   // ─── Render ────────────────────────────────────────────────────────────────
   return (
-    <div css={widgetStyle}>
-      {/* Hidden map view connector */}
+    <Paper variant='flat' className='jimu-widget runtime-pmquery' css={widgetStyle}>
+      {/* Hidden map view connector — same pattern as query-simple */}
       {config.mapWidgetId && (
         <JimuMapViewComponent
           useMapWidgetId={config.mapWidgetId}
@@ -439,8 +456,12 @@ export default function Widget (props: AllWidgetProps<IMConfig>) {
         />
       )}
 
-      <div className='pmq-header'>PMQuery — District {DISTRICT}</div>
+      {/* Header — matches query-simple's widget-header style */}
+      <div className='pmq-header'>
+        <h3>{label || widgetLabel}</h3>
+      </div>
 
+      {/* Scrollable body */}
       <div className='pmq-body'>
         {/* District badge */}
         <div className='pmq-field'>
@@ -508,9 +529,42 @@ export default function Widget (props: AllWidgetProps<IMConfig>) {
             />
           </div>
         </div>
+
+        {/* Error alert — inline in body so it scrolls with content */}
+        {error && (
+          <Alert
+            type='warning'
+            closable
+            onClose={() => setError(null)}
+            text={error}
+            css={css`width: 100%;`}
+          />
+        )}
+
+        {/* Result card */}
+        {result && (
+          <div className='pmq-result'>
+            <div className='pmq-result-header'>
+              {getI18nMessage('resultTitle')
+                .replace('{ROUTE}', result.route)
+                .replace('{COUNTY}', result.county)}
+            </div>
+            <div className='pmq-result-body'>
+              {result.fields.map((f, i) => (
+                <div key={i} className='pmq-result-row'>
+                  <span className='pmq-field-label'>{f.label}</span>
+                  <span className='pmq-field-value'>{f.value}</span>
+                </div>
+              ))}
+              <div className='pmq-point-count'>
+                {getI18nMessage('pointCount').replace('{count}', String(result.pointCount))}
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
-      {/* Actions */}
+      {/* Actions — pinned above footer, same pattern as query-simple */}
       <div className='pmq-actions'>
         <Button
           type='primary'
@@ -520,7 +574,7 @@ export default function Widget (props: AllWidgetProps<IMConfig>) {
           css={css`flex: 1;`}
         >
           {searching
-            ? <><Loading type={LoadingType.Donut} width={14} css={css`margin-right:6px;`} />{getI18nMessage('searching')}</>
+            ? <><Loading type={LoadingType.Donut} width={14} css={css`margin-right: 6px;`} />{getI18nMessage('searching')}</>
             : getI18nMessage('search')
           }
         </Button>
@@ -534,38 +588,11 @@ export default function Widget (props: AllWidgetProps<IMConfig>) {
         </Button>
       </div>
 
-      {/* Error */}
-      {error && (
-        <div className='pmq-alert'>
-          <Alert
-            type='warning'
-            closable
-            onClose={() => setError(null)}
-            text={error}
-          />
-        </div>
-      )}
-
-      {/* Result card */}
-      {result && (
-        <div className='pmq-result'>
-          <div className='pmq-result-header'>
-            Route {result.route} — {result.county} County
-          </div>
-          <div className='pmq-result-body'>
-            {result.fields.map((f, i) => (
-              <div key={i} className='pmq-result-row'>
-                <span className='pmq-field-label'>{f.label}</span>
-                <span className='pmq-field-value'>{f.value}</span>
-              </div>
-            ))}
-            <div className='pmq-point-count'>
-              {result.pointCount} postmile points connected
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
+      {/* Footer — matches query-simple's stationary footer */}
+      <div className='pmq-footer'>
+        <span>PMQuery — District {DISTRICT}</span>
+      </div>
+    </Paper>
   )
 }
 
