@@ -1,8 +1,8 @@
 /** @jsx jsx */
 import { React, jsx, css, hooks } from 'jimu-core'
 import { TextInput, Select, Option, Button } from 'jimu-ui'
-import { SortAscendingArrowOutlined } from 'jimu-icons/outlined/directional/sort-ascending-arrow'
-import { SortDescendingArrowOutlined } from 'jimu-icons/outlined/directional/sort-descending-arrow'
+import { SortAscendingOutlined } from 'jimu-icons/outlined/directional/sort-ascending'
+import { SortDescendingOutlined } from 'jimu-icons/outlined/directional/sort-descending'
 
 interface FeedControlsProps {
   /** Whether to show the search bar */
@@ -201,7 +201,7 @@ export default function FeedControls (props: FeedControlsProps): React.ReactElem
                   align-items: start;
                 `}
               >
-                {sortDirection === 'asc' ? <SortAscendingArrowOutlined /> : <SortDescendingArrowOutlined />}
+                {sortDirection === 'asc' ? <SortAscendingOutlined /> : <SortDescendingOutlined />}
               </Button>
             )}
           </div>
