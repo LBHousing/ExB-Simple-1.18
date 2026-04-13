@@ -1028,17 +1028,24 @@ export default class Widget extends React.PureComponent<AllWidgetProps<IMConfig>
     }
     // Add mode falls through to draw below
 
-    // Unique tag for this line group so Remove mode can find it later
-    const groupOid = newFeatures[0]?.attributes?.OBJECTID ?? newFeatures[0]?.attributes?.FID ?? Date.now()
+    // Sort by postmile (PM field) so points connect in road order, not query-return order
+    const sorted = [...newFeatures].sort((a, b) => {
+      const av = parseFloat(a.attributes?.PM) || 0
+      const bv = parseFloat(b.attributes?.PM) || 0
+      return av - bv
+    })
 
-    const path = newFeatures.map(f => {
+    // Unique tag for this line group so Remove mode can find it later
+    const groupOid = sorted[0]?.attributes?.OBJECTID ?? sorted[0]?.attributes?.FID ?? Date.now()
+
+    const path = sorted.map(f => {
       const pt = f.geometry as __esri.Point
       return [pt.x, pt.y]
     })
 
     const polyline = new Polyline({
       paths: [path],
-      spatialReference: newFeatures[0].geometry.spatialReference
+      spatialReference: sorted[0].geometry.spatialReference
     })
 
     const lineColor = config.lineConnectColor || '#FF6B00'
@@ -1058,12 +1065,12 @@ export default class Widget extends React.PureComponent<AllWidgetProps<IMConfig>
         }
       }),
       new Graphic({
-        geometry: newFeatures[0].geometry,
+        geometry: sorted[0].geometry,
         attributes: { pmqLineGroupOid: groupOid },
         symbol: { type: 'simple-marker', color: '#34d399', size: 10, outline: { color: 'white', width: 1.5 } }
       }),
       new Graphic({
-        geometry: newFeatures[newFeatures.length - 1].geometry,
+        geometry: sorted[sorted.length - 1].geometry,
         attributes: { pmqLineGroupOid: groupOid },
         symbol: { type: 'simple-marker', color: '#D2333F', size: 10, outline: { color: 'white', width: 1.5 } }
       })

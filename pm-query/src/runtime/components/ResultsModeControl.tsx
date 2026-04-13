@@ -17,9 +17,9 @@ interface ResultsModeControlProps {
 // ─── Color Config ───────────────────────────────────────────────────
 
 const MODE_COLORS = {
-  new: { active: '#3b82f6', hover: '#2563eb', border: '#3b82f6', bg: 'rgba(59, 130, 246, 0.15)', text: '#1e40af' },
-  add: { active: '#059669', hover: '#047857', border: '#059669', bg: 'rgba(5, 150, 105, 0.15)', text: '#065f46' },
-  remove: { active: '#be123c', hover: '#9f1239', border: '#be123c', bg: 'rgba(225, 29, 72, 0.15)', text: '#9f1239' }
+  new: { active: '#3b82f6', hover: '#2563eb', border: '#3b82f6', bg: 'rgba(59, 130, 246, 0.15)', text: '#ffffff' },
+  add: { active: '#059669', hover: '#047857', border: '#059669', bg: 'rgba(5, 150, 105, 0.15)', text: '#ffffff' },
+  remove: { active: '#be123c', hover: '#9f1239', border: '#be123c', bg: 'rgba(225, 29, 72, 0.15)', text: '#ffffff' }
 } as const
 
 const MODE_ICONS: Record<ResultsModeValue, { char: string; size: string }> = {
