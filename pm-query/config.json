@@ -1,4 +1,11 @@
 {
-  "lineColor": "#FF6B00",
-  "lineWidth": 5
+  "queryItems": [],
+  "arrangeType": "BLOCK",
+  "arrangeWrap": false,
+  "resultListDirection": "Vertical",
+  "resultPagingStyle": "MultiPage",
+  "defaultPageSize": 20
 }
+
+
+

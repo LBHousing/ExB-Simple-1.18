@@ -5,17 +5,101 @@
   "version": "1.18.0",
   "exbVersion": "1.18.0",
   "author": "LBHousing",
-  "description": "Postmile query widget — search District 2 highway postmile points by County, Route, and PM range. Connects results into a route line on the map and merges begin/end PM into a single result card.",
+  "description": "PMQuery - postmile route query with connect-points-as-line",
   "dependency": "jimu-arcgis",
   "copyright": "",
   "license": "http://www.apache.org/licenses/LICENSE-2.0",
+  "messageActions": [
+    {
+      "name": "logExtentAction",
+      "label": "Log Map Extent to Console",
+      "uri": "actions/log-extent-action"
+    }
+  ],
+  "publishMessages": [
+    {
+      "messageType": "DATA_RECORDS_SELECTION_CHANGE",
+      "messageCarryData": "OUTPUT_DATA_SOURCE"
+    },
+    {
+      "messageType": "DATA_RECORD_SET_CHANGE",
+      "messageCarryData": "USE_DATA_SOURCE"
+    }
+  ],
   "properties": {
     "hasConfig": true,
-    "hasSettingPage": true
+    "hasSettingPage": true,
+    "canConsumeDataAction": true,
+    "coverLayoutBackground": true,
+    "canGenerateMultipleOutputDataSources": true
   },
+  "excludeDataActions": [
+    "arcgis-map.addToMap",
+    "arcgis-map.showOnMap",
+    "arcgis-map.zoomToFeature",
+    "zoomToFeature",
+    "edit.edit",
+    "query-select-loaded",
+    "query-clear-selection"
+  ],
   "defaultSize": {
-    "width": 340,
-    "height": 520
+    "width": 350,
+    "height": 400
   },
-  "translatedLocales": ["en"]
+  "extensions": [
+    {
+      "name": "appConfigOperations",
+      "point": "APP_CONFIG_OPERATIONS",
+      "uri": "tools/app-config-operations"
+    },
+    {
+      "name": "builderOperations",
+      "point": "BUILDER_OPERATIONS",
+      "uri": "tools/builder-operations"
+    }
+  ],
+  "translatedLocales": [
+    "en",
+    "ar",
+    "bg",
+    "bs",
+    "ca",
+    "cs",
+    "da",
+    "de",
+    "el",
+    "es",
+    "et",
+    "fi",
+    "fr",
+    "he",
+    "hr",
+    "hu",
+    "id",
+    "it",
+    "ja",
+    "ko",
+    "lt",
+    "lv",
+    "no",
+    "nl",
+    "pl",
+    "pt-br",
+    "pt-pt",
+    "ro",
+    "ru",
+    "sk",
+    "sl",
+    "sr",
+    "sv",
+    "th",
+    "tr",
+    "zh-cn",
+    "uk",
+    "vi",
+    "zh-hk",
+    "zh-tw"
+  ]
 }
+
+

@@ -1,0 +1,391 @@
+/** @jsx jsx */
+import {
+  React,
+  jsx,
+  css,
+  classNames,
+  hooks,
+  type FeatureLayerDataSource,
+  type ImmutableObject,
+  type DataRecord,
+  type FeatureDataRecord,
+  DataSourceManager
+} from 'jimu-core'
+import { type QueryItemType, ListDirection } from '../config'
+import { QueryResultItem } from './query-result-item'
+import { getPopupTemplate } from './query-utils'
+import { useAutoHeight } from './useAutoHeight'
+import defaultMessage from './translations/default'
+import { createQuerySimpleDebugLogger } from 'widgets/shared-code/mapsimple-common'
+
+const debugLogger = createQuerySimpleDebugLogger()
+
+export interface SimpleListProps {
+  widgetId: string
+  queryItem: ImmutableObject<QueryItemType>
+  outputDS: FeatureLayerDataSource
+  records: DataRecord[]
+  direction: ListDirection
+  hoverPinColor?: string // r022.106: Configurable hover pin color
+  onEscape: () => void
+  onSelectChange: (data: FeatureDataRecord) => void
+  onRemove: (data: FeatureDataRecord) => void
+  /** r023.32: Zoom to single record. Passed to QueryResultItem for menu/inline icon. */
+  onZoomTo?: (data: FeatureDataRecord) => void
+  /** r026.009: Pan to single record (center without zoom). Passed to QueryResultItem. */
+  onPanTo?: (data: FeatureDataRecord) => void
+  /** r024.46: When true, clicking a result already zooms, so zoom button is redundant */
+  zoomOnResultClick?: boolean
+  /** r026.009: When true, clicking a result pans (centers) without zoom */
+  panOnResultClick?: boolean
+  expandByDefault?: boolean
+  // r021.77: itemExpandStates removed - doesn't persist with no-rerender approach
+  removedRecordIds?: Set<string>
+  onRenderDone?: (options: { dataItems: any[] }) => void
+  // r021.87: Queries array for looking up config by __queryConfigId
+  queries?: ImmutableArray<ImmutableObject<QueryItemType>>
+  // r022.106: Hover preview
+  mapView?: __esri.MapView | __esri.SceneView
+}
+
+const getStyle = (isAutoHeight: boolean) => {
+  return css`
+    display: flex;
+    flex: 1 1 ${isAutoHeight ? 'auto' : 0};
+    overflow: auto;
+    max-height: ${isAutoHeight ? 'calc(61.8vh - 100px)' : 'none'};
+
+    .query-result-item + .query-result-item {
+      margin-left: 0.5rem;
+      margin-top: 0;
+    }
+
+    &.vertical {
+      flex-direction: column;
+      .list-items {
+        position: relative;
+        flex-direction: column;
+      }
+
+      .feature-info-component {
+        width: 100%;
+      }
+
+      .query-result-item + .query-result-item {
+        margin-left: 0;
+        margin-top: 0.5rem;
+      }
+    }
+    .list-items {
+      display: flex;
+    }
+  `
+}
+
+export function SimpleList (props: SimpleListProps) {
+  const {
+    widgetId,
+    outputDS,
+    queryItem,
+    records,
+    direction,
+    onEscape,
+    onSelectChange,
+    onRemove,
+    onZoomTo,
+    onPanTo,
+    zoomOnResultClick,
+    panOnResultClick,
+    expandByDefault,
+    // r021.77: itemExpandStates removed
+    removedRecordIds,
+    onRenderDone,
+    queries,
+    mapView,
+    hoverPinColor // r022.106: Configurable hover pin color
+  } = props
+  
+  const isAutoHeight = useAutoHeight()
+  const resultContainerRef = React.useRef<HTMLDivElement>(null)
+  const getI18nMessage = hooks.useTranslation(defaultMessage)
+  const [showScrollTop, setShowScrollTop] = React.useState(false)
+
+  const onScrollContainer = React.useCallback((e: React.UIEvent<HTMLDivElement>): void => {
+    const shouldShow = e.currentTarget.scrollTop > 200
+    setShowScrollTop(prev => prev !== shouldShow ? shouldShow : prev)
+  }, [])
+
+  const scrollToTop = React.useCallback((): void => {
+    resultContainerRef.current?.scrollTo({ top: 0, behavior: 'smooth' })
+  }, [])
+  
+  // r021.76: Cache popup templates per queryConfig
+  // Key: queryConfig.configId, Value: { popupTemplate, defaultPopupTemplate }
+  const popupTemplateCacheRef = React.useRef<Map<string, { popup: any, default: any, isCustomTemplate?: boolean, rawTemplate?: string }>>(new Map())
+  
+  // r021.77 / r024.24: Cleanup cache on unmount
+  // Popup templates may hold DOM references that prevent GC
+  React.useEffect(() => {
+    return () => {
+      debugLogger.log('RESULTS-MODE', {
+        event: 'SimpleList-cleanup-popup-template-cache',
+        widgetId,
+        cacheSize: popupTemplateCacheRef.current.size,
+        timestamp: Date.now()
+      })
+      // r024.24: Null out template contents before clearing to help GC
+      popupTemplateCacheRef.current.forEach((templates, configId) => {
+        templates.popup = null
+        templates.default = null
+      })
+      popupTemplateCacheRef.current.clear()
+    }
+  }, [widgetId])
+  
+  // r021.87: Diagnostic - log queries received
+  React.useEffect(() => {
+    debugLogger.log('RESULTS-MODE', {
+      event: 'SimpleList-queries-received',
+      widgetId,
+      hasQueries: !!queries,
+      queriesCount: queries?.length || 0,
+      timestamp: Date.now()
+    })
+  }, [queries, widgetId])
+
+  // Filter out removed records
+  const filteredRecords = React.useMemo(() => {
+    return records?.filter(record => !removedRecordIds?.has(record.getId())) || []
+  }, [records, removedRecordIds])
+
+  // Notify parent when records are rendered (for auto-switch logic)
+  React.useEffect(() => {
+    if (onRenderDone && filteredRecords.length > 0) {
+      debugLogger.log('RESULTS-MODE', {
+        event: 'SimpleList-onRenderDone-called',
+        widgetId,
+        queryItemConfigId: queryItem.configId,
+        filteredRecordsCount: filteredRecords.length,
+        totalRecordsCount: records.length,
+        removedRecordIdsCount: removedRecordIds?.size || 0,
+        timestamp: Date.now()
+      })
+      onRenderDone({ dataItems: filteredRecords })
+    }
+  }, [filteredRecords, onRenderDone, widgetId, queryItem.configId, records.length, removedRecordIds])
+
+  // r021.87: Fetch and cache popup templates for all queryConfigs found in records
+  React.useEffect(() => {
+    if (!queries || !filteredRecords) return
+    
+    // Get unique queryConfigIds from records
+    const uniqueConfigIds = new Set<string>()
+    filteredRecords.forEach(record => {
+      const configId = (record as any).feature?.attributes?.__queryConfigId
+      if (configId) {
+        uniqueConfigIds.add(configId)
+      }
+    })
+    
+    // Fetch templates for any config we haven't cached yet
+    const dsManager = DataSourceManager.getInstance()
+    
+    uniqueConfigIds.forEach(configId => {
+      if (!popupTemplateCacheRef.current.has(configId)) {
+        const queryConfig = queries.find(q => q.configId === configId)
+        if (queryConfig) {
+          // r023.17: Resolve the CORRECT origin DS for this queryConfig.
+          // After a query switch in Add mode, outputDS points to the NEW query's layer.
+          // Cross-query records need their OWN origin DS for correct popup templates.
+          let originDSForConfig: FeatureLayerDataSource | undefined
+          const useDS = queryConfig.useDataSource
+          const originDSId = typeof useDS === 'string' ? useDS : useDS?.dataSourceId
+          
+          if (originDSId) {
+            const resolvedDS = dsManager.getDataSource(originDSId)
+            if (resolvedDS) {
+              originDSForConfig = resolvedDS as FeatureLayerDataSource
+            }
+          }
+          
+          debugLogger.log('RESULTS-MODE', {
+            event: 'fetching-popup-template-for-config',
+            widgetId,
+            queryConfigId: configId,
+            cachedConfigIds: Array.from(popupTemplateCacheRef.current.keys()),
+            originDSId: originDSId || 'none',
+            usingOriginOverride: !!originDSForConfig,
+            timestamp: Date.now()
+          })
+          
+          getPopupTemplate(outputDS, queryConfig, originDSForConfig).then(rs => {
+            popupTemplateCacheRef.current.set(configId, {
+              popup: rs.popupTemplate,
+              default: rs.defaultPopupTemplate,
+              isCustomTemplate: (rs as any).isCustomTemplate, // r026.002: Pass through for render pool
+              rawTemplate: (rs as any).rawTemplate // r026.005: Raw template for card renderer
+            })
+            
+            // Force re-render to show new templates
+            setPopupTemplateVersion(prev => prev + 1)
+          })
+        }
+      }
+    })
+  }, [filteredRecords, queries, outputDS, widgetId])
+  
+  // State to force re-render when new templates are cached
+  const [popupTemplateVersion, setPopupTemplateVersion] = React.useState(0)
+
+  const handleKeyUp = React.useCallback((evt) => {
+    if (evt.key === 'Escape') {
+      evt.stopPropagation()
+      onEscape()
+    }
+  }, [onEscape])
+
+  const handleKeyDown = React.useCallback((evt) => {
+    if (evt.key === ' ') {
+      evt.preventDefault()
+    }
+  }, [])
+
+  return (
+    <div
+      onKeyUp={handleKeyUp}
+      onKeyDown={handleKeyDown}
+      onScroll={onScrollContainer}
+      className={classNames({ vertical: direction === ListDirection.Vertical })}
+      css={getStyle(isAutoHeight)}
+      ref={resultContainerRef}
+    >
+      <div className='list-items px-4 py-1' role='listbox'>
+        {filteredRecords.map((dataItem) => {
+          const recordId = dataItem.getId()
+          const record = dataItem as FeatureDataRecord
+          
+          // r021.87: Read queryConfigId directly from record (stamped when added)
+          const recordQueryConfigId = record.feature?.attributes?.__queryConfigId
+          
+          // Look up the query config to get popup template
+          let recordPopupTemplate: any
+          let recordDefaultPopupTemplate: any
+          let recordIsCustomTemplate = false
+          let recordRawTemplate: string | undefined
+          
+          if (recordQueryConfigId) {
+            const recordConfig = queries.find(q => q.configId === recordQueryConfigId)
+            if (recordConfig) {
+              const cachedTemplates = popupTemplateCacheRef.current.get(recordConfig.configId)
+              if (cachedTemplates) {
+                recordPopupTemplate = cachedTemplates.popup
+                recordDefaultPopupTemplate = cachedTemplates.default
+                recordIsCustomTemplate = !!cachedTemplates.isCustomTemplate
+                recordRawTemplate = cachedTemplates.rawTemplate
+                
+                debugLogger.log('RESULTS-MODE', {
+                  event: 'record-template-lookup',
+                  widgetId,
+                  recordId,
+                  queryConfigId: recordQueryConfigId,
+                  hasPopupTemplate: !!recordPopupTemplate,
+                  hasDefaultPopupTemplate: !!recordDefaultPopupTemplate,
+                  timestamp: Date.now()
+                })
+              } else {
+                debugLogger.log('RESULTS-MODE', {
+                  event: 'record-template-not-in-cache',
+                  widgetId,
+                  recordId,
+                  queryConfigId: recordQueryConfigId,
+                  queryConfigId: recordConfig.configId,
+                  cachedConfigIds: Array.from(popupTemplateCacheRef.current.keys()),
+                  timestamp: Date.now()
+                })
+              }
+              } else {
+                debugLogger.log('RESULTS-MODE', {
+                  event: 'record-config-not-found-by-id',
+                  widgetId,
+                  recordId,
+                  queryConfigId: recordQueryConfigId,
+                  availableQueries: queries?.length || 0,
+                  timestamp: Date.now()
+                })
+              }
+            }
+          
+          // r021.77: Always use expandByDefault - individual state tracking removed
+          const expandByDefaultValue = expandByDefault ?? true
+          
+          // r021.94: Use composite key to prevent React key collisions when multiple records share same ID
+          const compositeKey = recordQueryConfigId ? `${recordId}__${recordQueryConfigId}` : recordId
+          
+          return (
+            <QueryResultItem
+              key={compositeKey}
+              data={dataItem as FeatureDataRecord}
+              dataSource={outputDS}
+              widgetId={widgetId}
+              popupTemplate={recordPopupTemplate}
+              defaultPopupTemplate={recordDefaultPopupTemplate}
+              isCustomTemplate={recordIsCustomTemplate}
+              rawTemplate={recordRawTemplate}
+              expandByDefault={expandByDefaultValue}
+              onClick={onSelectChange}
+              onRemove={onRemove}
+              onZoomTo={onZoomTo}
+              onPanTo={onPanTo}
+              zoomOnResultClick={zoomOnResultClick}
+              panOnResultClick={panOnResultClick}
+              mapView={mapView}
+              hoverPinColor={hoverPinColor}
+            />
+          )
+        })}
+      </div>
+      {/* Scroll-to-top FAB */}
+      {showScrollTop && (
+        <button
+          onClick={scrollToTop}
+          aria-label={getI18nMessage('scrollToTop')}
+          title={getI18nMessage('scrollToTop')}
+          css={css`
+            position: sticky;
+            bottom: 10px;
+            left: 100%;
+            transform: translateX(-15px);
+            flex-shrink: 0;
+            width: 36px;
+            height: 36px;
+            min-height: 36px;
+            border-radius: 6px;
+            border: none;
+            background: var(--sys-color-primary-main, #0079c1);
+            color: #fff;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+            transition: background 0.2s, box-shadow 0.2s, transform 0.15s;
+            z-index: 10;
+            &:hover {
+              background: var(--sys-color-primary-dark, #005e95);
+              box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+              transform: translateX(-15px) translateY(-1px);
+            }
+            &:active {
+              transform: translateX(-15px) translateY(0);
+            }
+          `}
+        >
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M3 10l5-5 5 5"/>
+          </svg>
+        </button>
+      )}
+    </div>
+  )
+}
+

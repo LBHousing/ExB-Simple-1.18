@@ -1,288 +1,1002 @@
 /** @jsx jsx */
-import {
-  React,
-  jsx,
-  css,
-  type AllWidgetProps,
-  DataSourceComponent,
-  type FeatureLayerDataSource,
-  hooks
-} from 'jimu-core'
-import {
-  Button,
-  Select,
-  Option,
-  TextInput,
-  Alert,
-  Loading,
-  LoadingType,
-  Paper,
-  WidgetPlaceholder
-} from 'jimu-ui'
-import { JimuMapViewComponent, type JimuMapView, loadArcGISJSAPIModules } from 'jimu-arcgis'
-import { type IMConfig } from '../config'
-import { versionManager } from '../version-manager'
+import { React, jsx, css, type AllWidgetProps, DataSourceManager, type FeatureLayerDataSource, type FeatureDataRecord, MessageManager, DataRecordsSelectionChangeMessage, type DataSource } from 'jimu-core'
+import { Paper, WidgetPlaceholder } from 'jimu-ui'
+import { type IMConfig, QueryArrangeType, SelectionType } from '../config'
 import defaultMessages from './translations/default'
+import { getWidgetRuntimeDataMap } from './widget-config'
+import { JimuMapViewComponent, type JimuMapView } from 'jimu-arcgis'
 
-// ─── Constants ────────────────────────────────────────────────────────────────
+import { versionManager } from '../version-manager'
+import { QueryTaskList } from './query-task-list'
+import { TaskListInline } from './query-task-list-inline'
+import { TaskListPopperWrapper } from './query-task-list-popper-wrapper'
+import { QueryWidgetContext } from './widget-context'
+import { createQuerySimpleDebugLogger, highlightConfigManager } from 'widgets/shared-code/mapsimple-common'
+import { calculateRecordsExtent } from './zoom-utils'
+import { WIDGET_VERSION } from '../version'
+import { removeHashParam } from './hash-utils'
+// Managers (extracted from class component, r018–r019)
+import { UrlConsumptionManager } from './managers/url-consumption-manager'
+import { WidgetVisibilityManager } from './managers/widget-visibility-manager'
+import { MapViewManager } from './managers/map-view-manager'
+import { GraphicsLayerManager } from './managers/graphics-layer-manager'
+import { AccumulatedRecordsManager } from './managers/accumulated-records-manager'
+import { EventManager, OPEN_WIDGET_EVENT, QUERYSIMPLE_SELECTION_EVENT, RESTORE_ON_IDENTIFY_CLOSE_EVENT } from './managers/event-manager'
+import { SelectionRestorationManager } from './managers/selection-restoration-manager'
 
-const DISTRICT = '2'
-const GRAPHICS_LAYER_ID = 'pmquery-route-line'
+const debugLogger = createQuerySimpleDebugLogger()
+const { iconMap } = getWidgetRuntimeDataMap()
 
-// ─── Styles ───────────────────────────────────────────────────────────────────
+// Event constants moved to EventManager (r018.59 - Chunk 7.1)
 
-const widgetStyle = css`
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  overflow: hidden;
+/**
+ * QuerySimple Widget
+ * 
+ * A high-performance query widget for ArcGIS Experience Builder that provides:
+ * - Universal SQL optimization for database index usage
+ * - Dual-mode deep linking (hash fragments and query strings)
+ * - Results accumulation across multiple queries
+ * - Selection persistence and restoration
+ * - Graphics layer highlighting for map visualization
+ * 
+ * Architecture:
+ * This widget follows a "Hook & Shell" pattern where complex logic is extracted into
+ * manager classes (UrlConsumptionManager, WidgetVisibilityManager, MapViewManager)
+ * to keep the main widget class clean and maintainable.
+ * 
+ * @since 1.19.0-r018.18
+ * @see {@link UrlConsumptionManager} for URL parameter handling
+ * @see {@link WidgetVisibilityManager} for panel visibility detection
+ * @see {@link MapViewManager} for map view reference management
+ */
+export default class Widget extends React.PureComponent<AllWidgetProps<IMConfig>, { 
+  initialQueryValue?: { shortId: string, value: string }, 
+  isPanelVisible?: boolean, 
+  hasSelection?: boolean, 
+  selectionRecordCount?: number, 
+  resultsMode?: SelectionType, 
+  accumulatedRecords?: FeatureDataRecord[], 
+  resultsExtent?: __esri.Extent | null,
+  graphicsLayerInitialized?: boolean, 
+  activeTab?: 'query' | 'results'
+}> {
+  static versionManager = versionManager
+  // Chunk 1: URL Parameter Consumption Manager (r018.8)
+  private urlConsumptionManager = new UrlConsumptionManager()
+  // Chunk 2: Widget Visibility Engine Manager (r018.13) - Step 2.3: Switch to manager
+  private visibilityManager = new WidgetVisibilityManager()
+  
+  // Refs must be declared before managers that use them
+  private widgetRef = React.createRef<HTMLDivElement>()
+  private graphicsLayerRef = React.createRef<__esri.GraphicsLayer | null>()
+  private mapViewRef = React.createRef<__esri.MapView | __esri.SceneView | null>()
+  
+  // Chunk 6: Map View Management Manager (r018.16) - Step 6.3: Switch to manager
+  private mapViewManager = new MapViewManager(this.mapViewRef)
+  // Chunk 4: Graphics Layer Management Manager (r018.24) - Step 4.2: Parallel execution
+  private graphicsLayerManager = new GraphicsLayerManager(this.graphicsLayerRef, this.mapViewRef)
+  // Chunk 5: Accumulated Records Management Manager (r018.26) - Step 5.1: Add manager without integration
+  private accumulatedRecordsManager = new AccumulatedRecordsManager()
+  // Chunk 7: Event Handling Manager (r018.59) - Step 7.1: Create Event Manager
+  private eventManager = new EventManager()
+  // r025.072: Mobile popup behavior — JSAPI watch handle
+  private popupVisibleHandle: __esri.WatchHandle | null = null
 
-  .pmq-header {
-    padding: 6px 16px;
-    border-bottom: 1px solid var(--sys-color-divider-secondary);
-    background-color: var(--sys-color-surface);
-    flex-shrink: 0;
-
-    h3 {
-      margin: 0;
-      font-size: 1rem;
-      font-weight: 600;
-      color: var(--sys-color-text-primary);
+  // Chunk 3: Selection & Restoration Manager (r019.1) - Section 3.1: Selection State Tracking
+  private selectionRestorationManager = new SelectionRestorationManager(
+    () => this.state, // stateGetter
+    {
+      onStateUpdate: (newState) => this.setState(newState as any)
     }
+  )
+
+  // r024.5: Register config in constructor so it's available before any callbacks fire
+  // (handleMapViewChange can fire before componentDidMount)
+  constructor(props: AllWidgetProps<IMConfig>) {
+    super(props)
+    highlightConfigManager.registerConfig(props.id, props.config)
   }
 
-  .pmq-body {
-    flex: 1;
-    overflow-y: auto;
-    padding: 16px;
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-    background-color: var(--sys-color-surface-paper);
+  state: {
+    initialQueryValue?: { shortId: string, value: string },
+    isPanelVisible?: boolean,
+    hasSelection?: boolean,
+    selectionRecordCount?: number,
+    resultsMode?: SelectionType,
+    accumulatedRecords?: FeatureDataRecord[],
+    resultsExtent?: __esri.Extent | null,
+    graphicsLayerInitialized?: boolean,
+    activeTab?: 'query' | 'results',
+    // Track when HelperSimple explicitly opens widget - only then should query-task-list use initialQueryValue for selection
+    // Using state instead of ref ensures React triggers re-renders when flag changes
+    shouldUseInitialQueryValueForSelection?: boolean
+    // r025.041: JimuMapView for spatial draw tools (JimuDraw requires JimuMapView, not raw MapView)
+    jimuMapView?: JimuMapView | null
+  } = {
+    resultsMode: SelectionType.NewSelection, // Default mode
+    activeTab: 'query',
+    resultsExtent: null,
+    jimuMapView: null
   }
 
-  .pmq-field {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-
-    label {
-      font-size: 11px;
-      font-weight: 600;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-      color: var(--sys-color-text-primary);
-    }
+  /**
+   * Handles tab change between "Query" and "Results" tabs.
+   * 
+   * @param activeTab - The tab to switch to ('query' or 'results')
+   * 
+   * @since 1.19.0-r017.0
+   */
+  handleTabChange = (activeTab: 'query' | 'results') => {
+    this.setState({ activeTab })
   }
 
-  .pmq-row {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 10px;
+  /**
+   * Resets the manual modifications flag when user starts fresh operations.
+   * This allows hash-triggered queries to work again after explicit user actions.
+   */
+  resetManualModifications = () => {
+    // FIX (r018.96): Removed manuallyRemovedRecordIds tracking - no longer needed
+    // Duplicate detection in mergeResultsIntoAccumulated handles preventing duplicates
   }
 
-  .pmq-district-badge {
-    display: inline-flex;
-    align-items: center;
-    background-color: var(--sys-color-action-selected, rgba(0,121,193,0.08));
-    border: 1px solid var(--sys-color-primary-main, #0079c1);
-    border-radius: 4px;
-    padding: 6px 12px;
-    font-size: 13px;
-    color: var(--sys-color-primary-main, #0079c1);
-    font-weight: 600;
-  }
+  /**
+   * Handles HelperSimple's open widget event.
+   * QuerySimple should only process hash parameters when HelperSimple explicitly opens the widget.
+   * This ensures HelperSimple remains the orchestrator and prevents autonomous hash processing.
+   */
+  handleOpenWidgetEvent = (event: CustomEvent) => {
+    const { id } = this.props
 
-  .pmq-actions {
-    display: flex;
-    gap: 8px;
-    padding: 8px 16px 12px;
-    background-color: var(--sys-color-surface-paper);
-    border-top: 1px solid var(--sys-color-divider-secondary);
-    flex-shrink: 0;
-  }
+    debugLogger.log('HASH-EXEC', {
+      event: 'querysimple-handleopenwidgetevent-received',
+      widgetId: id,
+      eventWidgetId: event.detail?.widgetId,
+      matches: event.detail?.widgetId === id,
+      currentState: {
+        shouldUseInitialQueryValueForSelection: this.state.shouldUseInitialQueryValueForSelection,
+        hasInitialQueryValue: !!this.state.initialQueryValue,
+        initialQueryValueShortId: this.state.initialQueryValue?.shortId,
+        initialQueryValueValue: this.state.initialQueryValue?.value,
+        currentUrlHash: window.location.hash.substring(1),
+      },
+      timestamp: Date.now()
+    })
 
-  .pmq-result {
-    border: 1px solid var(--sys-color-divider-secondary);
-    border-radius: 4px;
-    overflow: hidden;
-    background-color: var(--sys-color-surface-paper);
+    // With surgical hash modification, the hash already contains only desired record IDs
+    // No need to block processing - the hash is now a precise representation of selection intent
 
-    .pmq-result-header {
-      background-color: var(--sys-color-primary-main, #0079c1);
-      color: #fff;
-      padding: 8px 14px;
-      font-size: 13px;
-      font-weight: 600;
-    }
-
-    .pmq-result-body {
-      padding: 10px 14px;
-      display: flex;
-      flex-direction: column;
-    }
-
-    .pmq-result-row {
-      display: flex;
-      justify-content: space-between;
-      font-size: 13px;
-      border-bottom: 1px solid var(--sys-color-divider-secondary);
-      padding: 5px 0;
-
-      &:last-child {
-        border-bottom: none;
-      }
-
-      .pmq-field-label {
-        color: var(--sys-color-surface-paper-hint, #666);
-        font-weight: 500;
-        flex: 0 0 40%;
-      }
-
-      .pmq-field-value {
-        color: var(--sys-color-surface-paper-text, #333);
-        text-align: right;
-        flex: 1;
-        word-break: break-word;
-      }
-    }
-
-    .pmq-point-count {
-      margin-top: 8px;
-      font-size: 11px;
-      color: var(--sys-color-text-tertiary);
-      text-align: right;
-    }
-  }
-
-  .pmq-footer {
-    padding: 4px 12px;
-    border-top: 1px solid var(--sys-color-divider-secondary);
-    background-color: var(--sys-color-surface-paper);
-    flex-shrink: 0;
-    text-align: center;
-
-    span {
-      font-size: 0.75rem;
-      color: var(--sys-color-text-tertiary);
-      font-weight: 400;
-      letter-spacing: 0.025em;
-    }
-  }
-`
-
-// ─── Types ────────────────────────────────────────────────────────────────────
-
-interface ResultCard {
-  fields: Array<{ label: string; value: string }>
-  pointCount: number
-  route: string
-  county: string
-}
-
-// ─── Widget ───────────────────────────────────────────────────────────────────
-
-export default function Widget (props: AllWidgetProps<IMConfig>) {
-  const { config, id, label, intl } = props
-  const getI18nMessage = hooks.useTranslation(defaultMessages)
-
-  const widgetLabel = intl.formatMessage({
-    id: '_widgetLabel',
-    defaultMessage: defaultMessages._widgetLabel
-  })
-
-  // ── Data source — stored when DataSourceComponent signals it is ready ──────
-  const dsRef = React.useRef<FeatureLayerDataSource | null>(null)
-
-  // Form state
-  const [county, setCounty] = React.useState('')
-  const [route, setRoute] = React.useState('')
-  const [beginPM, setBeginPM] = React.useState('')
-  const [endPM, setEndPM] = React.useState('')
-
-  // County dropdown
-  const [countyOptions, setCountyOptions] = React.useState<string[]>([])
-  const [loadingCounties, setLoadingCounties] = React.useState(false)
-
-  // Query state
-  const [searching, setSearching] = React.useState(false)
-  const [error, setError] = React.useState<string | null>(null)
-  const [result, setResult] = React.useState<ResultCard | null>(null)
-
-  // Map view ref
-  const jimuMapViewRef = React.useRef<JimuMapView | null>(null)
-  const graphicsLayerRef = React.useRef<__esri.GraphicsLayer | null>(null)
-
-  // ── DataSourceComponent callback — fires when DS is ready ──────────────────
-  // This is the correct pattern from query-simple: never call ds.load() manually.
-  const handleDataSourceCreated = React.useCallback(async (ds: FeatureLayerDataSource) => {
-    dsRef.current = ds
-
-    // Get the real FeatureLayer using query-simple's proven pattern:
-    // getOriginDataSources()[0] → createJSAPILayerByDataSource() → load()
-    try {
-      const originDS = ds.getOriginDataSources()[0] as FeatureLayerDataSource
-      if (!originDS) return
-
-      const featureLayer = await originDS.createJSAPILayerByDataSource() as __esri.FeatureLayer
-      await featureLayer.load()
-
-      setLoadingCounties(true)
-      const qResult = await featureLayer.queryFeatures({
-        where: `DISTRICT = '${DISTRICT}'`,
-        outFields: ['COUNTY'],
-        returnDistinctValues: true,
-        orderByFields: ['COUNTY ASC']
+    // Only process if this event is for our widget
+    if (event.detail?.widgetId !== id) {
+      debugLogger.log('HASH-EXEC', {
+        event: 'querysimple-handleopenwidgetevent-ignored-wrong-widget',
+        widgetId: id,
+        eventWidgetId: event.detail?.widgetId,
+        timestamp: Date.now()
       })
-
-      const counties = qResult.features
-        .map(f => f.attributes.COUNTY as string)
-        .filter(Boolean)
-        .sort()
-      setCountyOptions(counties)
-    } catch (e) {
-      console.error('[PMQuery] county load failed', e)
-    } finally {
-      setLoadingCounties(false)
+      return
     }
-  }, [])
+    
+    // NOTE: We don't check processed hashes here anymore
+    // The check happens in onInitialValueFound after we know which shortId:value pair is being processed
+    
+    debugLogger.log('HASH', {
+      event: 'open-widget-event-received-from-helpersimple',
+      widgetId: id,
+      timestamp: Date.now()
+    })
+    
+    // Set flag to allow query-task-list to use initialQueryValue for selection
+    // This ensures we only react to hash parameters when HelperSimple explicitly opens us
+    // Using state instead of ref ensures React triggers re-render so query-task-list sees the change
+    this.setState({ shouldUseInitialQueryValueForSelection: true }, () => {
+      debugLogger.log('HASH-EXEC', {
+        event: 'querysimple-flag-set-true-state-updated',
+        widgetId: id,
+        newState: {
+          shouldUseInitialQueryValueForSelection: this.state.shouldUseInitialQueryValueForSelection,
+          hasInitialQueryValue: !!this.state.initialQueryValue,
+          initialQueryValueShortId: this.state.initialQueryValue?.shortId,
+          initialQueryValueValue: this.state.initialQueryValue?.value
+        },
+        timestamp: Date.now()
+      })
+    })
+    
+    debugLogger.log('HASH', {
+      event: 'shouldUseInitialQueryValueForSelection-flag-set-true',
+      widgetId: id,
+      flagValue: true,
+      timestamp: Date.now()
+    })
+    
+    // Now check URL parameters - HelperSimple has explicitly opened us
+    this.urlConsumptionManager.checkUrlParameters(
+      this.props,
+      this.state.resultsMode,
+      {
+        onInitialValueFound: (value) => {
+          if (value) {
+            // Only update if the value or shortId has changed to avoid unnecessary re-renders
+            const willUpdate = this.state.initialQueryValue?.shortId !== value.shortId || this.state.initialQueryValue?.value !== value.value
+            
+            debugLogger.log('HASH-EXEC', {
+              event: 'querysimple-oninitialvaluefound-will-update',
+              widgetId: this.props.id,
+              willUpdate,
+              previousShortId: this.state.initialQueryValue?.shortId,
+              previousValue: this.state.initialQueryValue?.value,
+              newShortId: value.shortId,
+              newValue: value.value,
+              timestamp: Date.now()
+            })
+            
+            if (willUpdate) {
+              debugLogger.log('HASH', {
+                event: 'url-param-detected',
+                widgetId: this.props.id,
+                shortId: value.shortId,
+                value: value.value,
+                foundIn: 'manager',
+                triggeredBy: 'helpersimple-open-widget-event',
+                previousShortId: this.state.initialQueryValue?.shortId,
+                previousValue: this.state.initialQueryValue?.value,
+                timestamp: Date.now()
+              })
+              
+              // Reset to New mode when hash parameter is detected to avoid bugs with accumulation modes
+              // Using AccumulatedRecordsManager (r018.58)
+              const needsModeReset = this.state.resultsMode !== SelectionType.NewSelection
+              const currentMode = this.state.resultsMode
+              
+              // Update initialQueryValue state
+              this.setState({ 
+                initialQueryValue: { shortId: value.shortId, value: value.value }
+              }, () => {
+                debugLogger.log('HASH-EXEC', {
+                  event: 'querysimple-initialqueryvalue-state-updated',
+                  widgetId: this.props.id,
+                  newState: {
+                    shouldUseInitialQueryValueForSelection: this.state.shouldUseInitialQueryValueForSelection,
+                    hasInitialQueryValue: !!this.state.initialQueryValue,
+                    initialQueryValueShortId: this.state.initialQueryValue?.shortId,
+                    initialQueryValueValue: this.state.initialQueryValue?.value,
+                    resultsMode: this.state.resultsMode
+                  },
+                  timestamp: Date.now()
+                })
+              })
 
-  // ── Map view handler ───────────────────────────────────────────────────────
-  const handleActiveViewChange = React.useCallback((jimuMapView: JimuMapView) => {
-    jimuMapViewRef.current = jimuMapView
-  }, [])
+              // Reset mode via manager if needed
+              if (needsModeReset) {
+                const resetResult = this.accumulatedRecordsManager.resetModeOnHashDetection(
+                  this.props.id,
+                  currentMode
+                )
+                
+                // Update widget state from manager's return value
+                this.setState({
+                  resultsMode: resetResult.resultsMode,
+                  accumulatedRecords: resetResult.accumulatedRecords
+                })
+              }
+            }
+          } else {
+            debugLogger.log('HASH-EXEC', {
+              event: 'querysimple-oninitialvaluefound-no-value-clearing',
+              widgetId: this.props.id,
+              hasCurrentInitialQueryValue: !!this.state.initialQueryValue,
+              timestamp: Date.now()
+            })
+            // No matching parameters found - clear state
+            if (this.state.initialQueryValue) {
+              this.setState({ initialQueryValue: undefined })
+            }
+          }
+        },
+        onModeResetNeeded: () => {
+          // Reset to New mode when hash parameter is detected
+          // Using AccumulatedRecordsManager (r018.58)
+          const currentMode = this.state.resultsMode
+          const needsReset = currentMode !== SelectionType.NewSelection
+          
+          if (needsReset) {
+            debugLogger.log('HASH', {
+              event: 'mode-reset-needed-on-hash-detection',
+              widgetId: this.props.id,
+              currentMode,
+              triggeredBy: 'helpersimple-open-widget-event',
+              timestamp: Date.now()
+            })
+            
+            const resetResult = this.accumulatedRecordsManager.resetModeOnHashDetection(
+              this.props.id,
+              currentMode
+            )
+            
+            // Update widget state from manager's return value
+            this.setState({
+              resultsMode: resetResult.resultsMode,
+              accumulatedRecords: resetResult.accumulatedRecords
+            })
+          }
+        }
+      }
+    )
+  }
 
-  // ── Ensure graphics layer on map ───────────────────────────────────────────
-  const ensureGraphicsLayer = React.useCallback(async (): Promise<__esri.GraphicsLayer | null> => {
-    const mapView = jimuMapViewRef.current?.view
-    if (!mapView) return null
-
-    const existing = mapView.map.findLayerById(GRAPHICS_LAYER_ID) as __esri.GraphicsLayer
-    if (existing) {
-      graphicsLayerRef.current = existing
-      return existing
+  componentDidMount() {
+    // Listen for HelperSimple's open widget event
+    // QuerySimple should only process hash parameters when HelperSimple explicitly opens the widget
+    // This ensures HelperSimple remains the orchestrator
+    // Note: Event listener setup moved to parallel execution section below (Chunk 7.1)
+    
+    // Chunk 2: Manager implementation (r018.13 - Step 2.3: Switch to manager)
+    if (this.widgetRef.current) {
+      this.visibilityManager.setup(
+        this.widgetRef.current,
+        this.props,
+        {
+          onVisibilityChange: (isVisible) => {
+            // Update state
+            this.setState({ isPanelVisible: isVisible })
+            
+            // Handle restoration logic
+            this.handleVisibilityChange(isVisible)
+          }
+        },
+        (isVisible) => {
+          // Manager's internal state tracking callback
+          // (no-op, restoration handled in onVisibilityChange)
+        }
+      )
+      
+      // Notify mount via manager
+      this.visibilityManager.notifyMount(this.props.id)
     }
 
-    const [GraphicsLayer] = await loadArcGISJSAPIModules(['esri/layers/GraphicsLayer'])
-    const layer = new GraphicsLayer({ id: GRAPHICS_LAYER_ID, title: 'PMQuery Route', listMode: 'hide' })
-    mapView.map.add(layer)
-    graphicsLayerRef.current = layer
-    return layer
-  }, [])
+    // Chunk 5: Initialize accumulated records manager state (r018.26 - Step 5.1: Add manager)
+    // Sync manager state with widget state
+    if (this.state.resultsMode) {
+      this.accumulatedRecordsManager.handleResultsModeChange(
+        this.props.id,
+        this.state.resultsMode,
+        false
+      )
+    }
+    if (this.state.accumulatedRecords && this.state.accumulatedRecords.length > 0) {
+      this.accumulatedRecordsManager.handleAccumulatedRecordsChange(
+        this.props.id,
+        this.state.accumulatedRecords
+      )
+    }
+    
+    // Set up callbacks for manager
+    // Set up callbacks for manager (r018.57)
+    // Note: Primary state updates come from manager return values in handleResultsModeChange/handleAccumulatedRecordsChange
+    // These callbacks serve as backup/verification but shouldn't be needed since we update state directly from return values
+    this.accumulatedRecordsManager.setCallbacks({
+      onModeChange: (mode) => {
+        // State is updated from handleResultsModeChange return value, so this is just a backup
+        if (this.state.resultsMode !== mode) {
+          this.setState({ resultsMode: mode })
+        }
+      },
+      onAccumulatedRecordsChange: (records) => {
+        // State is updated from handleAccumulatedRecordsChange, so this is just a backup
+        const currentCount = this.state.accumulatedRecords?.length || 0
+        if (currentCount !== records.length) {
+          this.setState({ accumulatedRecords: records })
+        }
+      }
+    })
+    
+    // Chunk 7: Event handling (r018.59 - Step 7.1: Add manager)
+    this.eventManager.setHandlers({
+      onOpenWidgetEvent: this.handleOpenWidgetEvent,
+      // Chunk 3: Section 3.1 Step 3.1.5 (r019.5): Switch to manager implementation
+      onSelectionChange: (event) => this.selectionRestorationManager.handleSelectionChange(event),
+      onRestoreOnIdentifyClose: this.handleRestoreOnIdentifyClose
+    })
+    
+    this.eventManager.setup(this.props.id)
+    
+    // Chunk 3: Selection & Restoration Manager (r019.2) - Section 3.1: Initialize widgetId
+    this.selectionRestorationManager.setWidgetId(this.props.id)
+    
+    // Graphics layer will be initialized when map view becomes available via JimuMapViewComponent
+    
+    // Register widget config with HighlightConfigManager (r022.91)
+    highlightConfigManager.registerConfig(this.props.id, this.props.config)
+  }
 
-  // ── Clear graphics ─────────────────────────────────────────────────────────
-  const clearLine = React.useCallback(() => {
-    graphicsLayerRef.current?.removeAll()
-  }, [])
+  componentWillUnmount() {
+    // r021.6 Chunk 2c: Close popup when widget unmounts
+    const mapView = this.mapViewManager.getMapView() || this.mapViewRef.current
+    if (mapView?.popup?.visible) {
+      mapView.popup.close()
+      debugLogger.log('POPUP', {
+        event: 'popup-closed-on-widget-unmount',
+        widgetId: this.props.id,
+        reason: 'Widget unmounted',
+        timestamp: Date.now()
+      })
+    }
+    
+    // r024.112: urlConsumptionManager.cleanup() removed — was a no-op.
 
-  // ── Draw polyline through PM-sorted points ─────────────────────────────────
-  const drawLine = React.useCallback(async (features: __esri.Graphic[]) => {
-    if (!jimuMapViewRef.current?.view || features.length < 2) return
+    // Chunk 7: Event handling cleanup (r018.59 - Step 7.1: Add manager)
+    this.eventManager.cleanup(this.props.id)
+    
+    // Chunk 2: Clean up manager (r018.13 - Step 2.3: Switch to manager)
+    this.visibilityManager.cleanup()
+    this.visibilityManager.notifyUnmount(this.props.id)
+    
+    // Chunk 4: Graphics layer cleanup (r018.25 - Step 4.3: Remove old implementation)
+    this.graphicsLayerManager.cleanup(this.props.id)
 
-    const [Graphic, Polyline] = await loadArcGISJSAPIModules(['esri/Graphic', 'esri/geometry/Polyline'])
-    const layer = await ensureGraphicsLayer()
-    if (!layer) return
+    // Chunk 5: Clean up accumulated records manager (r018.26 - Step 5.1: Add manager)
+    this.accumulatedRecordsManager.cleanup()
+    
+    // Unregister widget config from HighlightConfigManager (r022.91)
+    highlightConfigManager.unregisterConfig(this.props.id)
 
+    // r025.072: Clean up mobile popup watch handle
+    this.popupVisibleHandle?.remove()
+    
+    debugLogger.log('WIDGET-STATE', {
+      event: 'widget-closed',
+      widgetId: this.props.id,
+      isOpen: false,
+      timestamp: new Date().toISOString()
+    })
+  }
+
+  componentDidUpdate(prevProps: AllWidgetProps<IMConfig>) {
+    // QuerySimple no longer autonomously checks URL parameters
+    // Only HelperSimple can trigger hash parameter processing via OPEN_WIDGET_EVENT
+    // This ensures HelperSimple remains the orchestrator
+    
+    // r022.76: Watch props.state for ACTUAL close (not DOM visibility/minimize)
+    // Uses official ExB state property instead of fragile DOM visibility detection
+    if (prevProps.state !== this.props.state) {
+      if (this.props.state === 'OPENED' && prevProps.state === 'CLOSED') {
+        // Widget opened - restore selections
+        debugLogger.log('WIDGET-STATE', {
+          event: 'widget-opened-via-props-state',
+          widgetId: this.props.id,
+          prevState: prevProps.state,
+          currentState: this.props.state,
+          action: 'restore-selections',
+          method: 'props.state-monitoring',
+          note: 'r022.76: Official ExB state detection (not DOM visibility)',
+          timestamp: Date.now()
+        })
+        
+        // r022.76: Notify HelperSimple via event (replaces IntersectionObserver notification)
+        const event = new CustomEvent('querysimple-widget-state-changed', {
+          detail: {
+            widgetId: this.props.id,
+            isOpen: true
+          },
+          bubbles: true,
+          cancelable: true
+        })
+        window.dispatchEvent(event)
+        
+        // r022.76: Restore selections on open
+        this.handleVisibilityChange(true)
+        
+      } else if (this.props.state === 'CLOSED' && prevProps.state === 'OPENED') {
+        // Widget closed - clear selections
+        debugLogger.log('WIDGET-STATE', {
+          event: 'widget-closed-via-props-state',
+          widgetId: this.props.id,
+          prevState: prevProps.state,
+          currentState: this.props.state,
+          action: 'clear-selections',
+          method: 'props.state-monitoring',
+          note: 'r022.76: Official ExB state detection (not DOM visibility)',
+          timestamp: Date.now()
+        })
+        
+        // r022.76: Notify HelperSimple via event (replaces IntersectionObserver notification)
+        const event = new CustomEvent('querysimple-widget-state-changed', {
+          detail: {
+            widgetId: this.props.id,
+            isOpen: false
+          },
+          bubbles: true,
+          cancelable: true
+        })
+        window.dispatchEvent(event)
+        
+        // r022.76: Clear selections on close
+        this.handleVisibilityChange(false)
+      }
+    }
+    // Note: Minimize keeps state as 'OPENED', so no state change = no action = selections preserved ✓
+    
+    // Re-register config with HighlightConfigManager on config changes (r022.91)
+    if (prevProps.config !== this.props.config) {
+      highlightConfigManager.registerConfig(this.props.id, this.props.config)
+      
+      // r024.4: Detect addResultsAsMapLayer toggle change and reinitialize layer
+      const prevAddResultsAsMapLayer = prevProps.config?.addResultsAsMapLayer === true
+      const currAddResultsAsMapLayer = this.props.config?.addResultsAsMapLayer === true
+      
+      if (prevAddResultsAsMapLayer !== currAddResultsAsMapLayer) {
+        // r024.4: Store mapView BEFORE cleanup (cleanup clears the ref)
+        const mapView = this.mapViewManager.getMapView() || this.mapViewRef.current
+        
+        debugLogger.log('GRAPHICS-LAYER', {
+          event: 'addResultsAsMapLayer-toggle-changed',
+          widgetId: this.props.id,
+          from: prevAddResultsAsMapLayer,
+          to: currAddResultsAsMapLayer,
+          action: 'reinitializing-layer',
+          hasMapView: !!mapView,
+          timestamp: Date.now()
+        })
+        
+        // Cleanup existing layer
+        this.graphicsLayerManager.cleanup(this.props.id)
+        this.graphicsLayerRef.current = null
+        
+        // Reinitialize with new layer type
+        if (mapView) {
+          void this.graphicsLayerManager.initialize(this.props.id, mapView, {
+            onGraphicsLayerInitialized: (graphicsLayer) => {
+              this.graphicsLayerRef.current = graphicsLayer
+              this.setState({ graphicsLayerInitialized: true })
+            }
+          })
+        }
+      }
+    }
+    
+    // Chunk 4: Graphics layer is now required (r018.25 - Step 4.3: Remove config change handling)
+    // No need to handle config changes for graphics layer since it's always enabled
+
+    // r025.072: No proactive re-apply needed — popup behavior is applied reactively
+    // each time a popup opens via the popup.visible watch in setupMobilePopupWatch().
+  }
+
+  /**
+   * Notifies HelperSimple widget of selection changes via custom event.
+   * 
+   * This method dispatches a custom event that HelperSimple listens to for tracking
+   * selection state. Called by QueryTaskResult component when user selects records.
+   * 
+   * @param recordIds - Array of selected record IDs (objectIds from the feature layer)
+   * @param dataSourceId - Optional data source ID for the selected records
+   * 
+   * @since 1.19.0-r017.0
+   */
+  notifyHelperSimpleOfSelection = (recordIds: string[], dataSourceId?: string) => {
+    const { id } = this.props
+    
+    // Chunk 7: Dispatch selection event via EventManager (r018.59)
+    // Note: This call is missing outputDsId and queryItemConfigId, but this method
+    // is only used for notifying HelperSimple (r021.110: lastSelection removed).
+    // The actual selection events come from query-task.tsx and query-result.tsx
+    // which use dispatchSelectionEvent from selection-utils.ts
+    this.eventManager.dispatchSelectionEvent(id, recordIds, dataSourceId)
+  }
+
+  /**
+   * Handles widget panel visibility changes from WidgetVisibilityManager.
+   * 
+   * This method implements the selection restoration pattern:
+   * - When panel opens: Restores selection to map if widget has accumulated records or last selection
+   * - When panel closes: Clears selection from map (but preserves widget state for restoration)
+   * 
+   * The restoration logic respects the current results mode:
+   * - "Add to" / "Remove from" modes: Uses accumulated records for restoration
+   * - "New" mode: Uses accumulated records (r021.110: lastSelection removed)
+   * 
+   * @param isVisible - True if widget panel is visible, false if hidden
+   * 
+   * @since 1.19.0-r018.13 (Chunk 2: Manager implementation)
+   * @see {@link WidgetVisibilityManager} for visibility detection implementation
+   */
+  handleVisibilityChange = (isVisible: boolean) => {
+    if (isVisible) {
+      // When panel opens, check if we have selection to restore
+      const isAccumulationMode = this.state.resultsMode === SelectionType.AddToSelection || 
+                                 this.state.resultsMode === SelectionType.RemoveFromSelection
+      const hasAccumulatedRecords = this.state.accumulatedRecords && this.state.accumulatedRecords.length > 0
+      const hasSelectionState = this.state.hasSelection || false
+      const hasSelectionToRestore = isAccumulationMode 
+        ? hasAccumulatedRecords 
+        : hasSelectionState
+      
+      debugLogger.log('RESTORE', {
+        event: 'panel-opened-checking-selection',
+        widgetId: this.props.id,
+        resultsMode: this.state.resultsMode,
+        isAccumulationMode,
+        hasSelection: hasSelectionState,
+        hasAccumulatedRecords,
+        accumulatedRecordsCount: this.state.accumulatedRecords?.length || 0,
+        selectionRecordCount: this.state.selectionRecordCount || 0,
+        hasSelectionToRestore,
+        decisionLogic: {
+          'isAccumulationMode': isAccumulationMode,
+          'hasAccumulatedRecords': hasAccumulatedRecords,
+          'hasSelectionState': hasSelectionState,
+          'calculated-hasSelectionToRestore': hasSelectionToRestore,
+          'will-call-addSelectionToMap': hasSelectionToRestore
+        }
+      })
+      
+      // Add selection to map if we have one
+      if (hasSelectionToRestore) {
+        // r020.1 (BUG-HASH-DIRTY-001): Safety check - only restore if we have records to display
+        const hasRecordsToDisplay = this.state.accumulatedRecords?.some(ar => ar.record) || 
+                                    this.state.selectionRecordCount > 0
+        
+        if (!hasRecordsToDisplay) {
+          debugLogger.log('RESTORE', {
+            event: 'panel-opened-skipping-restore-no-records',
+            widgetId: this.props.id,
+            reason: 'hasSelectionToRestore-true-but-no-records-to-display',
+            hasAccumulatedRecords,
+            accumulatedRecordsCount: this.state.accumulatedRecords?.length || 0,
+            selectionRecordCount: this.state.selectionRecordCount || 0
+          })
+          return // Don't restore if no records
+        }
+        
+        debugLogger.log('RESTORE', {
+          event: 'panel-opened-calling-addSelectionToMap',
+          widgetId: this.props.id,
+          reason: 'hasSelectionToRestore-is-true'
+        })
+        ;(async () => {
+          const deps = {
+            graphicsLayerRef: this.graphicsLayerRef,
+            mapViewRef: this.mapViewRef,
+            graphicsLayerManager: this.graphicsLayerManager,
+            config: this.props.config
+          }
+          await this.selectionRestorationManager.addSelectionToMap(deps)
+        })()
+      } else {
+        debugLogger.log('RESTORE', {
+          event: 'panel-opened-skipping-addSelectionToMap',
+          widgetId: this.props.id,
+          reason: 'hasSelectionToRestore-is-false',
+          why: isAccumulationMode 
+            ? 'no-accumulated-records' 
+            : 'no-hasSelection-state'
+        })
+      }
+    } else {
+      // r021.7 Chunk 2c: Close popup when widget panel closes
+      // r024.58: Skip on LL path - graphics persist, so popup content is still valid
+      const isLayerListMode = this.props.config?.addResultsAsMapLayer === true
+      const mapView = this.mapViewManager.getMapView() || this.mapViewRef.current
+      if (!isLayerListMode && mapView?.popup?.visible) {
+        mapView.popup.close()
+        debugLogger.log('POPUP', {
+          event: 'popup-closed-on-panel-close',
+          widgetId: this.props.id,
+          reason: 'Widget panel closed (non-LL mode)',
+          timestamp: Date.now()
+        })
+      }
+      
+      // When panel closes, clear selection from map only (keep widget state)
+      const isAccumulationMode = this.state.resultsMode === SelectionType.AddToSelection || 
+                                 this.state.resultsMode === SelectionType.RemoveFromSelection
+      const hasAccumulatedRecords = this.state.accumulatedRecords && this.state.accumulatedRecords.length > 0
+      const hasSelectionState = this.state.hasSelection || false
+      const hasSelectionToClear = isAccumulationMode 
+        ? hasAccumulatedRecords 
+        : hasSelectionState
+      
+      debugLogger.log('RESTORE', {
+        event: 'panel-closed-checking-selection',
+        widgetId: this.props.id,
+        resultsMode: this.state.resultsMode,
+        isAccumulationMode,
+        hasSelection: hasSelectionState,
+        hasAccumulatedRecords,
+        accumulatedRecordsCount: this.state.accumulatedRecords?.length || 0,
+        selectionRecordCount: this.state.selectionRecordCount || 0,
+        hasSelectionToClear,
+        decisionLogic: {
+          'isAccumulationMode': isAccumulationMode,
+          'hasAccumulatedRecords': hasAccumulatedRecords,
+          'hasSelectionState': hasSelectionState,
+          'calculated-hasSelectionToClear': hasSelectionToClear,
+          'will-call-clearSelectionFromMap': hasSelectionToClear
+        }
+      })
+      
+      if (hasSelectionToClear) {
+        debugLogger.log('RESTORE', {
+          event: 'panel-closed-calling-clearSelectionFromMap',
+          widgetId: this.props.id,
+          reason: 'hasSelectionToClear-is-true'
+        })
+        ;(async () => {
+          const deps = {
+            graphicsLayerRef: this.graphicsLayerRef,
+            mapViewRef: this.mapViewRef,
+            graphicsLayerManager: this.graphicsLayerManager,
+            config: this.props.config
+          }
+          await this.selectionRestorationManager.clearSelectionFromMap(deps)
+        })()
+      } else {
+        debugLogger.log('RESTORE', {
+          event: 'panel-closed-no-selection-to-clear',
+          widgetId: this.props.id,
+          reason: 'hasSelectionToClear-is-false',
+          why: isAccumulationMode 
+            ? 'no-accumulated-records' 
+            : 'no-hasSelection-state'
+        })
+      }
+    }
+  }
+
+  /**
+   * r025.072: Set up a reactive watch on popup.visible via the view.
+   * The popup object is NOT initialized until the first popup opens, so we cannot
+   * touch mapView.popup proactively. Instead we watch 'popup.visible' on the view
+   * (JSAPI supports nested property watches) and apply all mobile behavior — dock,
+   * action bar, collapsed — each time a popup becomes visible.
+   * Separate from HelperSimple's MutationObserver (which tracks popup close for
+   * selection restoration).
+   */
+  private setupMobilePopupWatch (): void {
+    const mapView = this.mapViewManager.getMapView() || this.mapViewRef.current
+    if (!mapView) return
+
+    // Clean up previous handle
+    this.popupVisibleHandle?.remove()
+
+    // Watch popup.visible on the view — fires when popup opens or closes.
+    // At this point mapView.popup is guaranteed to exist.
+    this.popupVisibleHandle = mapView.watch('popup.visible', (visible: boolean) => {
+      if (!visible || !mapView.popup) return
+      const config = this.props.config
+      const isMobile = mapView.width <= 600
+
+      // Collapsed
+      if (isMobile && config.mobilePopupCollapsed) {
+        mapView.popup.collapsed = true
+      }
+
+      // Dock position
+      if (isMobile && config.mobilePopupDockPosition) {
+        mapView.popup.dockEnabled = true
+        mapView.popup.dockOptions = {
+          position: config.mobilePopupDockPosition,
+          buttonEnabled: !config.mobilePopupHideDockButton
+        } as any
+      }
+
+      // Hide action bar
+      if (isMobile && config.mobilePopupHideActionBar) {
+        mapView.popup.visibleElements = {
+          ...mapView.popup.visibleElements as any,
+          actionBar: false
+        } as any
+      }
+
+      debugLogger.log('POPUP', {
+        event: 'mobile-popup-behavior-applied',
+        isMobile,
+        collapsed: isMobile && !!config.mobilePopupCollapsed,
+        dockPosition: config.mobilePopupDockPosition || 'auto',
+        hideActionBar: !!config.mobilePopupHideActionBar,
+        viewportWidth: mapView.width,
+        timestamp: Date.now()
+      })
+    })
+  }
+
+  /**
+   * Handles map view change from JimuMapViewComponent.
+   *
+   * This method is called by JimuMapViewComponent when the map view becomes available
+   * or changes. It delegates to MapViewManager for reference management and initializes
+   * the graphics layer if enabled in widget configuration.
+   *
+   * @param jimuMapView - The JimuMapView instance from JimuMapViewComponent, or null if unavailable
+   *
+   * @since 1.19.0-r018.18 (Chunk 6: Manager implementation)
+   * @see {@link MapViewManager} for map view reference management
+   */
+  private handleJimuMapViewChanged = (jimuMapView: JimuMapView | null) => {
+    const { id, config } = this.props
+    
+    // Manager implementation (r018.16 - Step 6.3: Switch to manager)
+    this.mapViewManager.handleJimuMapViewChanged(
+      jimuMapView,
+      this.props,
+      {
+        onMapViewChange: (newJimuMapView) => {
+          // Get map view from manager
+          const newMapView = this.mapViewManager.getMapView()
+
+          // r021.19: Store mapView in ref so it's available to QueryTask
+          this.mapViewRef.current = newMapView
+
+          // r025.041: Store JimuMapView in state for spatial Draw mode (JimuDraw component)
+          this.setState({ jimuMapView: newJimuMapView })
+          
+          // Chunk 4: Graphics layer initialization (r018.25 - Step 4.3: Remove old implementation)
+          // Initialize graphics layer if map view is available and graphics layer should be initialized
+          if (this.graphicsLayerManager.shouldInitialize(config, newMapView) && newMapView) {
+            // Use void to handle promise without blocking
+            void this.graphicsLayerManager.initialize(id, newMapView, {
+              onGraphicsLayerInitialized: (graphicsLayer) => {
+                // r021.19: Store graphics layer in ref
+                this.graphicsLayerRef.current = graphicsLayer
+                // Update state to force re-render and update props
+                this.setState({ graphicsLayerInitialized: true })
+              }
+            })
+          }
+
+          // r025.072: Set up reactive popup watch (applies behavior when popup opens)
+          this.setupMobilePopupWatch()
+        }
+      }
+    )
+  }
+
+  /**
+   * Initializes graphics layer lazily when output data source becomes available.
+   * 
+   * This method is called by QueryTask component when an output data source is created.
+   * It retrieves the map view from MapViewManager and initializes the graphics layer
+   * using GraphicsLayerManager if not already initialized.
+   * 
+   * @param outputDS - The output data source that was created
+   * 
+   * @since 1.19.0-r017.0
+   * @see {@link GraphicsLayerManager.initializeFromOutputDS} for graphics layer initialization
+   * @see {@link MapViewManager.getMapView} for map view retrieval
+   */
+
+  /**
+   * Initializes graphics layer lazily when output data source becomes available.
+   * 
+   * This method is called by QueryTask component when an output data source is created.
+   * It retrieves the map view from MapViewManager and initializes the graphics layer
+   * using GraphicsLayerManager if not already initialized.
+   * 
+   * @param outputDS - The output data source that was created
+   * 
+   * @since 1.19.0-r017.0
+   * @see {@link GraphicsLayerManager.initializeFromOutputDS} for graphics layer initialization
+   * @see {@link MapViewManager.getMapView} for map view retrieval
+   */
+  public initializeGraphicsLayerFromOutputDS = async (outputDS: DataSource) => {
+    const { id, config } = this.props
+    
+    // Chunk 4: Graphics layer initialization (r018.25 - Step 4.3: Remove old implementation)
+    // Use map view from manager if available
+    const mapView = this.mapViewManager.getMapView() || this.mapViewRef.current
+    
+    await this.graphicsLayerManager.initializeFromOutputDS(
+      id,
+      config,
+      outputDS,
+      mapView,
+      {
+        onGraphicsLayerInitialized: (graphicsLayer) => {
+          this.setState({ graphicsLayerInitialized: true })
+        }
+      }
+    )
+  }
+
+
+  /**
+   * Clears all graphics from the graphics layer if it exists.
+   * 
+   * This method is called when clearing results or switching queries in "New" mode
+   * to ensure graphics are removed from the map. It does not remove the graphics layer
+   * itself, only clears its contents.
+   * 
+   * @since 1.19.0-r017.0
+   * @see {@link GraphicsLayerManager.clearGraphics} for graphics clearing logic
+   */
+  public clearGraphicsLayerIfExists = () => {
+    const { config } = this.props
+    
+    // Chunk 4: Graphics layer clearing (r018.25 - Step 4.3: Remove old implementation)
+    this.graphicsLayerManager.clearGraphics(this.props.id, config)
+  }
+
+  /**
+   * Clears graphics layer refs after layer has been destroyed, then recreates the layer.
+   * 
+   * This method is called after cleanupGraphicsLayer() destroys the layer.
+   * It immediately recreates the layer so it's available for the next query.
+   * 
+   * @since 1.19.0-r021.19 (Option 2: Immediate recreation)
+   * @see {@link clearGraphicsLayerIfExists} for clearing graphics without destroying layer
+   */
+  public clearGraphicsLayerRefs = async () => {
+    const mapView = this.mapViewRef.current
+    const { id, config } = this.props
+    
+    debugLogger.log('GRAPHICS-LAYER', {
+      event: 'clearGraphicsLayerRefs-called',
+      widgetId: id,
+      hasMapView: !!mapView,
+      willRecreate: !!mapView,
+      timestamp: Date.now()
+    })
+    
+    // Clear old refs
+    this.graphicsLayerRef.current = null
+    
+    // Immediately recreate the layer if we still need it
+    if (mapView) {
+      try {
+        const { createOrGetGraphicsLayer, createOrGetResultGroupLayer } = await import('./graphics-layer-utils')
+        const useGroupLayer = highlightConfigManager.getAddResultsAsMapLayer(id)
+        const newLayer = useGroupLayer
+          ? await createOrGetResultGroupLayer(id, mapView)
+          : await createOrGetGraphicsLayer(id, mapView)
+        this.graphicsLayerRef.current = newLayer
+        
+        debugLogger.log('GRAPHICS-LAYER', {
+          event: 'clearGraphicsLayerRefs-recreated',
+          widgetId: id,
+          newLayerId: newLayer?.id,
+          useGroupLayer,
+          timestamp: Date.now()
+        })
+        
+        // Force re-render to pass new layer down
+        this.setState({ graphicsLayerInitialized: true })
+      } catch (error) {
+        debugLogger.log('GRAPHICS-LAYER', {
+          event: 'clearGraphicsLayerRefs-recreation-failed',
+          widgetId: id,
+          error: error instanceof Error ? error.message : String(error),
+          timestamp: Date.now()
+        })
+      }
+    }
+  }
+
+  /**
+   * Draws a polyline connecting point features in order after a successful query.
+   * Only fires when config.connectPointsAsLine is true.
+   * Uses a dedicated GraphicsLayer (id: 'querysimple-connect-line') separate from
+   * the highlight layer so it doesn't interfere with selection graphics.
+   */
+  public drawConnectLine = async (features: __esri.Graphic[]): Promise<void> => {
+    const { config } = this.props
+    if (!config.connectPointsAsLine) return
+
+    const mapView = this.mapViewRef.current
+    if (!mapView || features.length < 2) return
+
+    const { loadArcGISJSAPIModules } = await import('jimu-arcgis')
+    const [Graphic, Polyline, GraphicsLayer] = await loadArcGISJSAPIModules([
+      'esri/Graphic',
+      'esri/geometry/Polyline',
+      'esri/layers/GraphicsLayer'
+    ])
+
+    // Get or create a dedicated layer for the connect line
+    const layerId = 'querysimple-connect-line'
+    let layer = mapView.map.findLayerById(layerId) as __esri.GraphicsLayer
+    if (!layer) {
+      layer = new GraphicsLayer({ id: layerId, title: 'Route Line', listMode: 'hide' })
+      mapView.map.add(layer)
+    }
     layer.removeAll()
 
     const path = features.map(f => {
@@ -290,12 +1004,22 @@ export default function Widget (props: AllWidgetProps<IMConfig>) {
       return [pt.x, pt.y]
     })
 
-    const polyline = new Polyline({ paths: [path], spatialReference: features[0].geometry.spatialReference })
+    const polyline = new Polyline({
+      paths: [path],
+      spatialReference: features[0].geometry.spatialReference
+    })
 
     layer.addMany([
       new Graphic({
         geometry: polyline,
-        symbol: { type: 'simple-line', color: config.lineColor || '#FF6B00', width: config.lineWidth ?? 5, style: 'solid', cap: 'round', join: 'round' }
+        symbol: {
+          type: 'simple-line',
+          color: config.lineConnectColor || '#FF6B00',
+          width: config.lineConnectWidth ?? 5,
+          style: 'solid',
+          cap: 'round',
+          join: 'round'
+        }
       }),
       new Graphic({
         geometry: features[0].geometry,
@@ -306,258 +1030,546 @@ export default function Widget (props: AllWidgetProps<IMConfig>) {
         symbol: { type: 'simple-marker', color: '#D2333F', size: 10, outline: { color: 'white', width: 1.5 } }
       })
     ])
-
-    await jimuMapViewRef.current.view.goTo({ target: polyline }, { animate: true, duration: 800 })
-  }, [config.lineColor, config.lineWidth, ensureGraphicsLayer])
-
-  // ── Execute query ──────────────────────────────────────────────────────────
-  // Uses query-simple's proven pattern: getOriginDataSources()[0] →
-  // createJSAPILayerByDataSource() → queryFeatures() directly. No ds.load().
-  const handleSearch = React.useCallback(async () => {
-    setError(null)
-    setResult(null)
-    clearLine()
-
-    if (!dsRef.current) {
-      setError(getI18nMessage('errorNoLayer'))
-      return
-    }
-    if (!jimuMapViewRef.current) {
-      setError(getI18nMessage('errorNoMap'))
-      return
-    }
-    if (!county || !route || !beginPM || !endPM) {
-      setError('Please fill in all fields.')
-      return
-    }
-    const bPM = parseFloat(beginPM)
-    const ePM = parseFloat(endPM)
-    if (isNaN(bPM) || isNaN(ePM) || bPM >= ePM) {
-      setError(getI18nMessage('errorFields'))
-      return
-    }
-
-    setSearching(true)
-
-    try {
-      const originDS = dsRef.current.getOriginDataSources()[0] as FeatureLayerDataSource
-      const featureLayer = await originDS.createJSAPILayerByDataSource() as __esri.FeatureLayer
-      await featureLayer.load()
-
-      const where = [
-        `DISTRICT = '${DISTRICT}'`,
-        `COUNTY = '${county.replace(/'/g, "''")}'`,
-        `ROUTE = '${route.replace(/'/g, "''")}'`,
-        `PM >= ${bPM}`,
-        `PM <= ${ePM}`
-      ].join(' AND ')
-
-      const queryResult = await featureLayer.queryFeatures({
-        where,
-        outFields: ['*'],
-        returnGeometry: true,
-        orderByFields: ['PM ASC']
-      })
-
-      if (!queryResult.features?.length) {
-        setError(getI18nMessage('noResults'))
-        setSearching(false)
-        return
-      }
-
-      const features = queryResult.features
-      const first = features[0].attributes
-      const last = features[features.length - 1].attributes
-
-      const fieldEntries = Object.entries(first)
-        .filter(([key]) => key !== 'PM' && key !== 'OBJECTID' && key !== 'FID')
-        .map(([key, value]) => ({ label: key, value: value != null ? String(value) : '—' }))
-
-      setResult({
-        fields: [{ label: 'PM', value: `${first.PM} – ${last.PM}` }, ...fieldEntries],
-        pointCount: features.length,
-        route: String(first.ROUTE ?? route),
-        county: String(first.COUNTY ?? county)
-      })
-
-      await drawLine(features)
-    } catch (err) {
-      setError(getI18nMessage('errorQuery'))
-      console.error('[PMQuery]', err)
-    }
-
-    setSearching(false)
-  }, [county, route, beginPM, endPM, clearLine, drawLine, getI18nMessage])
-
-  // ── Clear ──────────────────────────────────────────────────────────────────
-  const handleClear = React.useCallback(() => {
-    setCounty('')
-    setRoute('')
-    setBeginPM('')
-    setEndPM('')
-    setError(null)
-    setResult(null)
-    clearLine()
-  }, [clearLine])
-
-  // ─── Render ────────────────────────────────────────────────────────────────
-  if (!config.useDataSource?.dataSourceId) {
-    return <WidgetPlaceholder widgetId={id} name={widgetLabel} />
   }
 
-  return (
-    <Paper variant='flat' className='jimu-widget runtime-pmquery' css={widgetStyle}>
-      {/* DataSourceComponent manages the DS lifecycle — same pattern as query-simple.
-          Never call ds.load() manually; wait for onDataSourceCreated. */}
-      <DataSourceComponent
-        useDataSource={config.useDataSource}
-        onDataSourceCreated={handleDataSourceCreated}
-      />
+  /**
+   * Handles selection change events from QueryTaskResult component.
+   * 
+   * This method updates widget state when records are selected or deselected in the
+   * results tab. It respects the current results mode:
+   * - "Add to" / "Remove from" modes: Uses accumulated records count for restoration state
+   * - "New" mode: Uses event record IDs for restoration state
+   * 
+   * Also handles automatic mode reset: If selection is cleared in "Remove from" mode,
+   * the mode is automatically reset to "New" since Remove mode requires selection to function.
+   * 
+   * @param event - Custom event containing selection details (widgetId, recordIds, outputDsId, queryItemConfigId)
+   * 
+   * @since 1.19.0-r017.0
+   */
 
-      {/* Map view connector */}
-      {config.mapWidgetId && (
-        <JimuMapViewComponent
-          useMapWidgetId={config.mapWidgetId}
-          onActiveViewChange={handleActiveViewChange}
-        />
-      )}
+  /**
+   * Handles restore request when identify popup closes.
+   * 
+   * This method restores selection to the map after the identify popup closes.
+   * It only restores if the widget panel is currently open and accumulated records exist.
+   * 
+   * r022.42: Simplified to use shared addSelectionToMap() path (same as componentDidShow)
+   * with manageGraphicsLayer=false to skip graphics clear/re-add (graphics already visible).
+   * 
+   * @param event - Custom event dispatched by HelperSimple (widgetId, timestamp)
+   * 
+   * @since 1.19.0-r017.0
+   * @see {@link RESTORE_ON_IDENTIFY_CLOSE_EVENT} for event name constant
+   */
+  private handleRestoreOnIdentifyClose = (event: Event) => {
+    const customEvent = event as CustomEvent<{ 
+      widgetId: string,
+      timestamp: string
+    }>
+    const { id } = this.props
+    
+    // Only handle if this is for our widget
+    if (customEvent.detail.widgetId !== id) {
+      return
+    }
+    
+    // r022.93: Trust props.state if available (minimized widgets still 'OPENED')
+    // Fallback to DOM visibility only if props.state is undefined (initial load)
+    const isWidgetOpen = this.props.state === 'OPENED' || 
+                         (this.props.state === undefined && this.visibilityManager.getIsPanelVisible())
+    
+    // r022.42: Simplified logging - no more per-layer event details
+    debugLogger.log('RESTORE', {
+      event: 'identify-popup-closed-restore-requested',
+      widgetId: id,
+      isWidgetOpen,
+      propsState: this.props.state,
+      domVisible: this.visibilityManager.getIsPanelVisible(),
+      resultsMode: this.state.resultsMode,
+      hasAccumulatedRecords: !!(this.state.accumulatedRecords && this.state.accumulatedRecords.length > 0),
+      accumulatedRecordsCount: this.state.accumulatedRecords?.length || 0,
+      note: 'r022.93: Trust props.state OPENED (even if minimized), fallback to DOM if undefined',
+      timestamp: customEvent.detail.timestamp
+    })
+    
+    // Only restore if widget is open
+    if (!isWidgetOpen) {
+      debugLogger.log('RESTORE', {
+        event: 'identify-popup-closed-restore-skipped-widget-closed',
+        widgetId: id,
+        propsState: this.props.state,
+        domVisible: this.visibilityManager.getIsPanelVisible(),
+        decision: 'SKIP_RESTORATION',
+        reason: 'Widget is closed'
+      })
+      return
+    }
+    
+    // r022.42: Check if accumulated records exist (universal for ALL modes)
+    if (!this.state.accumulatedRecords || this.state.accumulatedRecords.length === 0) {
+      debugLogger.log('RESTORE', {
+        event: 'identify-popup-closed-restore-skipped-no-accumulated-records',
+        widgetId: id,
+        resultsMode: this.state.resultsMode,
+        decision: 'SKIP_RESTORATION',
+        reason: 'No accumulated records to restore'
+      })
+      return
+    }
+    
+    // r022.42: Use shared restoration path (same as componentDidShow) with manageGraphicsLayer=false
+    debugLogger.log('RESTORE', {
+      event: 'identify-popup-closed-restoring-via-shared-path',
+      widgetId: id,
+      resultsMode: this.state.resultsMode,
+      accumulatedRecordsCount: this.state.accumulatedRecords.length,
+      manageGraphicsLayer: false,
+      note: 'r022.42: Using shared addSelectionToMap() with graphics management disabled'
+    })
+    
+    ;(async () => {
+      const deps = {
+        graphicsLayerRef: this.graphicsLayerRef,
+        mapViewRef: this.mapViewRef,
+        graphicsLayerManager: this.graphicsLayerManager,
+        config: this.props.config
+      }
+      await this.selectionRestorationManager.addSelectionToMap(deps, false) // r022.42: false = skip graphics management
+    })()
+  }
 
-      {/* Header — matches query-simple widget-header */}
-      <div className='pmq-header'>
-        <h3>{label || widgetLabel}</h3>
-      </div>
+  // ============================================================================
+  // r019.18: Removed addSelectionToMapParallel wrapper (27 lines)
+  // r019.20: Removed clearSelectionFromMapParallel wrapper (27 lines)
+  // All call sites now directly invoke SelectionRestorationManager methods
+  // ============================================================================
 
-      {/* Scrollable body */}
-      <div className='pmq-body'>
-        {/* District — fixed */}
-        <div className='pmq-field'>
-          <label>{getI18nMessage('district')}</label>
-          <div className='pmq-district-badge'>District {DISTRICT} — Fixed</div>
-        </div>
+  // ============================================================================
+  // r019.15: Removed old addSelectionToMap implementation (272 lines)
+  // Now fully handled by SelectionRestorationManager.addSelectionToMap()
+  // ============================================================================
 
-        {/* County */}
-        <div className='pmq-field'>
-          <label>{getI18nMessage('county')}</label>
-          <Select
-            value={county}
-            onChange={e => setCounty(e.target.value)}
-            disabled={loadingCounties || searching}
-            size='sm'
+  /**
+   * Handles results mode change from the mode dropdown in QueryTask component.
+   * 
+   * This method is called when the user switches between "Create new", "Add to", or
+   * "Remove from" modes. It performs the following actions:
+   * 
+   * 1. Consumes hash parameters when switching to accumulation modes (prevents re-triggering)
+   * 2. Clears accumulated records when switching to "New" mode
+   * 3. Updates widget state with the new mode
+   * 
+   * @param mode - The new selection type mode (NewSelection, AddToSelection, or RemoveFromSelection)
+   * 
+   * @since 1.19.0-r017.0
+   */
+  private handleResultsModeChange = (mode: SelectionType) => {
+    // Using AccumulatedRecordsManager (r018.58)
+    const shouldConsumeHash = (mode === SelectionType.AddToSelection || mode === SelectionType.RemoveFromSelection) && !!this.state.initialQueryValue?.shortId
+    
+    const result = this.accumulatedRecordsManager.handleResultsModeChange(
+      this.props.id,
+      mode,
+      shouldConsumeHash,
+      this.state.initialQueryValue?.shortId,
+      this.removeHashParameter
+    )
+
+    // Reset manual modifications when switching to New Selection mode
+    if (mode === SelectionType.NewSelection && this.state.resultsMode !== SelectionType.NewSelection) {
+      this.resetManualModifications()
+    }
+
+    // Update widget state from manager's return value
+    this.setState({
+      resultsMode: result.resultsMode,
+      accumulatedRecords: result.accumulatedRecords
+    })
+  }
+
+  /**
+   * Removes a hash parameter from the URL when switching to accumulation modes.
+   * 
+   * This method is called when switching to "Add to" or "Remove from" modes to consume
+   * the deep link parameter. This prevents the hash parameter from re-triggering the query
+   * when the widget re-renders.
+   * 
+   * The URL is updated using history.replaceState to avoid page reload, and both pathname
+   * and query string are preserved (e.g., debug parameters remain intact).
+   * 
+   * @param shortId - The shortId parameter to remove from the URL hash
+   * 
+   * @since 1.19.0-r017.0
+   */
+  private removeHashParameter = (shortId: string) => {
+    if (!shortId) return
+
+    if (removeHashParam(shortId)) {
+      // Clear the state so it won't trigger again
+      if (this.state.initialQueryValue?.shortId === shortId) {
+        this.setState({ initialQueryValue: undefined })
+      }
+    }
+  }
+
+  private handleAccumulatedRecordsChange = (records: FeatureDataRecord[]) => {
+    const previousRecords = this.state.accumulatedRecords || []
+    const previousCount = previousRecords.length
+    const newCount = records.length
+    
+    // r024.23: Optimize logging to avoid creating arrays on clear path
+    // Each .map() and .filter() creates a new array, contributing to 400K+ array accumulation
+    if (newCount > 0 || previousCount > 0) {
+      // Only compute IDs when there's something to log (non-empty case)
+      const previousIds = previousCount > 0 ? previousRecords.map(r => r.getId()) : []
+      const newIds = newCount > 0 ? records.map(r => r.getId()) : []
+      
+      debugLogger.log('RESULTS-MODE', {
+        event: 'accumulated-records-state-change',
+        widgetId: this.props.id,
+        previousCount,
+        previousIds: previousIds.slice(0, 20), // Limit to 20 for log readability
+        newCount,
+        newIds: newIds.slice(0, 20),
+        resultsMode: this.state.resultsMode,
+        timestamp: Date.now()
+      })
+    }
+    
+    // Using AccumulatedRecordsManager (r018.58)
+    this.accumulatedRecordsManager.handleAccumulatedRecordsChange(this.props.id, records)
+
+    // If we're in Remove mode and all accumulated records are cleared, reset to NewSelection mode
+    // Remove mode requires accumulated records to function, so it should be disabled when records are empty
+    const shouldResetMode = newCount === 0 && 
+                           this.state.resultsMode === SelectionType.RemoveFromSelection
+
+    // r024.23: Only capture stack trace for debugging when needed
+    const stackTrace = (previousCount > 0 || newCount > 0) 
+      ? (new Error().stack?.split('\n').slice(2, 6).join(' << ') || 'unknown')
+      : 'clear-path'
+    
+    // r024.74: Calculate extent once when records change (for zoom/pan actions)
+    const resultsExtent = records.length > 0 ? calculateRecordsExtent(records) : null
+    
+    debugLogger.log('ZOOM', {
+      event: 'resultsExtent-calculated-on-accumulation-change',
+      widgetId: this.props.id,
+      recordsCount: records.length,
+      hasExtent: !!resultsExtent,
+      extent: resultsExtent ? {
+        xmin: resultsExtent.xmin,
+        xmax: resultsExtent.xmax,
+        ymin: resultsExtent.ymin,
+        ymax: resultsExtent.ymax,
+        width: resultsExtent.width,
+        height: resultsExtent.height
+      } : null,
+      timestamp: Date.now()
+    })
+    
+    this.setState({ 
+      accumulatedRecords: records,
+      resultsExtent,
+      // Reset mode to NewSelection if all accumulated records cleared in Remove mode
+      ...(shouldResetMode ? {
+        resultsMode: SelectionType.NewSelection
+      } : {})
+    }, () => {
+      debugLogger.log('WIDGET-STATE', {
+        event: 'widget-updated-accumulated-records',
+        widgetId: this.props.id,
+        beforeCount: previousCount,
+        afterCount: this.state.accumulatedRecords?.length || 0,
+        expectedCount: records.length,
+        match: this.state.accumulatedRecords?.length === records.length,
+        willResetMode: shouldResetMode,
+        calledFrom: stackTrace,
+        timestamp: Date.now()
+      })
+    })
+
+    if (shouldResetMode) {
+      debugLogger.log('RESULTS-MODE', {
+        event: 'mode-reset-on-accumulated-records-cleared',
+        widgetId: this.props.id,
+        previousMode: SelectionType.RemoveFromSelection,
+        newMode: SelectionType.NewSelection,
+        reason: 'all-accumulated-records-cleared-in-remove-mode',
+        timestamp: Date.now()
+      })
+    }
+  }
+
+  /**
+   * NOTE: No longer needed - we use existing output DS instead of creating new one.
+   * Kept for reference but not used.
+   */
+  private getOrCreateAccumulatedResultsDS = async (originDS: FeatureLayerDataSource): Promise<FeatureLayerDataSource> => {
+    // This is no longer used - we merge records into existing output DS
+    throw new Error('This method is deprecated - use existing output DS instead')
+  }
+
+  // ============================================================================
+  // r019.16: Removed old clearSelectionFromMap implementation (355 lines)
+  // Now fully handled by SelectionRestorationManager.clearSelectionFromMap()
+  // ============================================================================
+
+  /**
+   * NOTIFY that a hash parameter has been used.
+   * Previously this removed the hash from the URL, but per updated requirements,
+   * user-entered hashes should remain in the URL.
+   * 
+   * @param shortId - The shortId parameter that was used
+   */
+  handleHashParameterUsed = (shortId: string) => {
+    const { id } = this.props
+    const { initialQueryValue } = this.state
+    
+    debugLogger.log('HASH-EXEC', {
+      event: 'querysimple-handlehashparameterused-called',
+      widgetId: id,
+      shortId,
+      currentState: {
+        shouldUseInitialQueryValueForSelection: this.state.shouldUseInitialQueryValueForSelection,
+        hasInitialQueryValue: !!this.state.initialQueryValue,
+        initialQueryValueShortId: this.state.initialQueryValue?.shortId,
+        initialQueryValueValue: this.state.initialQueryValue?.value
+      },
+      timestamp: Date.now()
+    })
+    
+    // NOTE: Hash parameters are NOT cleared here - they persist in URL
+    // Hash parameters are only consumed when switching to accumulation modes (Add/Remove)
+    // to prevent re-triggering when the user manually switches modes
+    
+    debugLogger.log('HASH', {
+      event: 'handleHashParameterUsed-notified',
+      widgetId: id,
+      shortId: shortId,
+      currentInitialQueryValue: initialQueryValue,
+      note: 'Hash parameter used but NOT cleared - hash remains in URL per user requirement',
+      timestamp: Date.now()
+    })
+    
+    // ALWAYS clear both hash state values after execution
+    // QuerySimple should not remember hash state after HelperSimple-driven execution completes
+    // This prevents autonomous re-processing when switching queries
+    // Using a single setState ensures atomic update and prevents race conditions
+    this.setState({ 
+      shouldUseInitialQueryValueForSelection: false,
+      initialQueryValue: undefined
+    }, () => {
+      debugLogger.log('HASH-EXEC', {
+        event: 'querysimple-handlehashparameterused-state-cleared',
+        widgetId: id,
+        shortId,
+        newState: {
+          shouldUseInitialQueryValueForSelection: this.state.shouldUseInitialQueryValueForSelection,
+          hasInitialQueryValue: !!this.state.initialQueryValue,
+          initialQueryValueShortId: this.state.initialQueryValue?.shortId,
+          initialQueryValueValue: this.state.initialQueryValue?.value
+        },
+        timestamp: Date.now()
+      })
+    })
+    
+    debugLogger.log('HASH', {
+      event: 'shouldUseInitialQueryValueForSelection-flag-cleared',
+      widgetId: id,
+      shortId: shortId,
+      flagValue: false,
+      timestamp: Date.now()
+    })
+  }
+
+
+  render () {
+    const { config, id, icon, label, layoutId, layoutItemId, controllerWidgetId } = this.props
+    const widgetLabel = this.props.intl.formatMessage({
+      id: '_widgetLabel',
+      defaultMessage: defaultMessages._widgetLabel
+    })
+    if (!config.queryItems?.length) {
+      return <WidgetPlaceholder icon={iconMap.iconQuery} widgetId={this.props.id} name={widgetLabel} />
+    }
+
+    if (config.arrangeType === QueryArrangeType.Popper && !controllerWidgetId) {
+      return (
+        <QueryWidgetContext.Provider value={`${layoutId}:${layoutItemId}`}>
+          <TaskListPopperWrapper
+            id={0}
+            icon={icon}
+            popperTitle={label}
+            minSize={config.sizeMap?.arrangementIconPopper?.minSize}
+            defaultSize={config.sizeMap?.arrangementIconPopper?.defaultSize}
           >
-            <Option value=''>
-              {loadingCounties ? getI18nMessage('loadingCounties') : '— Select County —'}
-            </Option>
-            {countyOptions.map(c => (
-              <Option key={c} value={c}>{c}</Option>
-            ))}
-          </Select>
-        </div>
+              <QueryTaskList
+                widgetId={id}
+                isInPopper
+                queryItems={config.queryItems}
+                defaultPageSize={config.defaultPageSize}
+                className='pb-4'
+                initialQueryValue={this.state.initialQueryValue}
+                shouldUseInitialQueryValueForSelection={this.state.shouldUseInitialQueryValueForSelection}
+                onHashParameterUsed={this.handleHashParameterUsed}
+                resultsMode={this.state.resultsMode}
+                onResultsModeChange={this.handleResultsModeChange}
+                accumulatedRecords={this.state.accumulatedRecords}
+                resultsExtent={this.state.resultsExtent}
+                onAccumulatedRecordsChange={this.handleAccumulatedRecordsChange}
+                graphicsLayer={this.graphicsLayerRef.current || undefined}
+                mapView={this.mapViewRef.current || undefined}
+                jimuMapView={this.state.jimuMapView}
+                onInitializeGraphicsLayer={this.initializeGraphicsLayerFromOutputDS}
+                onClearGraphicsLayer={this.clearGraphicsLayerIfExists}
+                onDestroyGraphicsLayer={this.clearGraphicsLayerRefs}
+                activeTab={this.state.activeTab}
+                onTabChange={this.handleTabChange}
+                eventManager={this.eventManager}
+                zoomOnResultClick={config.zoomOnResultClick}
+                panOnResultClick={config.panOnResultClick}
+                hoverPinColor={config.hoverPinColor}
+                isPanelVisible={this.state.isPanelVisible}
+              />
+          </TaskListPopperWrapper>
+        </QueryWidgetContext.Provider>
+      )
+    }
 
-        {/* Route */}
-        <div className='pmq-field'>
-          <label>{getI18nMessage('route')}</label>
-          <TextInput
-            size='sm'
-            value={route}
-            onChange={e => setRoute(e.target.value)}
-            placeholder='e.g. 1, 101, 405'
-            disabled={searching}
-            onKeyDown={e => { if (e.key === 'Enter') void handleSearch() }}
+    if (config.arrangeType === QueryArrangeType.Inline && !controllerWidgetId) {
+      return (
+        <QueryWidgetContext.Provider value={`${layoutId}:${layoutItemId}`}>
+          <TaskListInline
+            widgetId={id}
+            widgetLabel={label}
+            wrap={config.arrangeWrap}
+            queryItems={config.queryItems}
+            minSize={config.sizeMap?.arrangementIconPopper?.minSize}
+            defaultSize={config.sizeMap?.arrangementIconPopper?.defaultSize}
+            defaultPageSize={config.defaultPageSize}
+            initialQueryValue={this.state.initialQueryValue}
+            onHashParameterUsed={this.handleHashParameterUsed}
           />
-        </div>
+        </QueryWidgetContext.Provider>
+      )
+    }
 
-        {/* Begin / End PM */}
-        <div className='pmq-row'>
-          <div className='pmq-field'>
-            <label>{getI18nMessage('beginPM')}</label>
-            <TextInput
-              size='sm'
-              type='number'
-              value={beginPM}
-              onChange={e => setBeginPM(e.target.value)}
-              placeholder='0.00'
-              disabled={searching}
-              onKeyDown={e => { if (e.key === 'Enter') void handleSearch() }}
-            />
-          </div>
-          <div className='pmq-field'>
-            <label>{getI18nMessage('endPM')}</label>
-            <TextInput
-              size='sm'
-              type='number'
-              value={endPM}
-              onChange={e => setEndPM(e.target.value)}
-              placeholder='0.00'
-              disabled={searching}
-              onKeyDown={e => { if (e.key === 'Enter') void handleSearch() }}
-            />
-          </div>
-        </div>
-
-        {/* Error */}
-        {error && (
-          <Alert
-            type='warning'
-            closable
-            onClose={() => setError(null)}
-            text={error}
-            css={css`width: 100%;`}
+    return (
+      <Paper ref={this.widgetRef} variant='flat' className='jimu-widget runtime-query' data-widgetid={id} css={css`
+        display: flex;
+        flex-direction: column;
+        height: 100%;
+      `}>
+        {/* Hidden JimuMapViewComponent to get map view for graphics layer */}
+        {/* Uses explicit map widget ID from config (widget-level binding) */}
+        {config.highlightMapWidgetId && (
+          <JimuMapViewComponent
+            useMapWidgetId={config.highlightMapWidgetId}
+            onActiveViewChange={this.handleJimuMapViewChanged}
           />
         )}
-
-        {/* Result card */}
-        {result && (
-          <div className='pmq-result'>
-            <div className='pmq-result-header'>
-              {getI18nMessage('resultTitle')
-                .replace('{ROUTE}', result.route)
-                .replace('{COUNTY}', result.county)}
-            </div>
-            <div className='pmq-result-body'>
-              {result.fields.map((f, i) => (
-                <div key={i} className='pmq-result-row'>
-                  <span className='pmq-field-label'>{f.label}</span>
-                  <span className='pmq-field-value'>{f.value}</span>
-                </div>
-              ))}
-              <div className='pmq-point-count'>
-                {getI18nMessage('pointCount').replace('{count}', String(result.pointCount))}
-              </div>
-            </div>
+        <div className="widget-header" css={css`
+          padding: 6px 16px;
+          border-bottom: 1px solid var(--sys-color-divider-secondary);
+          background-color: var(--sys-color-surface);
+        `}>
+          <h3 className="widget-title" css={css`
+            margin: 0;
+            font-size: 1rem;
+            font-weight: 600;
+            color: var(--sys-color-text-primary);
+          `}>
+            {label || widgetLabel}
+          </h3>
+        </div>
+        <div css={css`
+          flex: 1;
+          display: flex;
+          flex-direction: column;
+          overflow: hidden;
+        `}>
+          <div css={css`
+            flex: 1;
+            overflow: auto;
+          `}>
+            <QueryWidgetContext.Provider value={`${layoutId}:${layoutItemId}`}>
+              <QueryTaskList 
+                widgetId={id} 
+                queryItems={config.queryItems} 
+                defaultPageSize={config.defaultPageSize} 
+                initialQueryValue={this.state.initialQueryValue} 
+                shouldUseInitialQueryValueForSelection={this.state.shouldUseInitialQueryValueForSelection}
+                onHashParameterUsed={this.handleHashParameterUsed}
+                resultsMode={this.state.resultsMode}
+                onResultsModeChange={this.handleResultsModeChange}
+                accumulatedRecords={this.state.accumulatedRecords}
+                resultsExtent={this.state.resultsExtent}
+                onAccumulatedRecordsChange={this.handleAccumulatedRecordsChange}
+                graphicsLayer={this.graphicsLayerRef.current || undefined}
+                mapView={this.mapViewRef.current || undefined}
+                onInitializeGraphicsLayer={this.initializeGraphicsLayerFromOutputDS}
+                onClearGraphicsLayer={this.clearGraphicsLayerIfExists}
+                onDestroyGraphicsLayer={this.clearGraphicsLayerRefs}
+                activeTab={this.state.activeTab}
+                onTabChange={this.handleTabChange}
+                eventManager={this.eventManager}
+                zoomOnResultClick={config.zoomOnResultClick}
+                panOnResultClick={config.panOnResultClick}
+                hoverPinColor={config.hoverPinColor}
+                isPanelVisible={this.state.isPanelVisible}
+                jimuMapView={this.state.jimuMapView}
+                onDrawConnectLine={this.drawConnectLine}
+              />
+            </QueryWidgetContext.Provider>
           </div>
-        )}
-      </div>
-
-      {/* Actions — pinned above footer */}
-      <div className='pmq-actions'>
-        <Button
-          type='primary'
-          size='sm'
-          onClick={() => void handleSearch()}
-          disabled={searching || !county || !route || !beginPM || !endPM}
-          css={css`flex: 1;`}
-        >
-          {searching
-            ? <><Loading type={LoadingType.Donut} width={14} css={css`margin-right: 6px;`} />{getI18nMessage('searching')}</>
-            : getI18nMessage('search')
-          }
-        </Button>
-        <Button
-          type='secondary'
-          size='sm'
-          onClick={handleClear}
-          disabled={searching}
-        >
-          {getI18nMessage('clear')}
-        </Button>
-      </div>
-
-      {/* Footer — matches query-simple stationary footer */}
-      <div className='pmq-footer'>
-        <span>PMQuery — District {DISTRICT}</span>
-      </div>
-    </Paper>
-  )
+          {/* Stationary footer */}
+          <div css={css`
+            padding: 4px 12px;
+            border-top: 1px solid var(--sys-color-divider-secondary);
+            background-color: var(--sys-color-surface-paper);
+            flex-shrink: 0;
+            text-align: center;
+          `}>
+            <span css={css`
+              font-size: 0.75rem;
+              color: var(--sys-color-text-tertiary);
+              font-weight: 400;
+              letter-spacing: 0.025em;
+              display: inline-flex;
+              align-items: center;
+              gap: 4px;
+            `}>
+              {/* Code/Open Source Symbol */}
+              <svg 
+                width="14" 
+                height="14" 
+                viewBox="0 0 24 24" 
+                fill="none" 
+                stroke="currentColor" 
+                strokeWidth="2"
+                css={css`
+                  flex-shrink: 0;
+                  opacity: 0.6;
+                `}
+              >
+                <polyline points="16 18 22 12 16 6"/>
+                <polyline points="8 6 2 12 8 18"/>
+              </svg>
+              QuerySimple by MapSimple
+              <span css={css`
+                margin-left: 6px;
+                opacity: 0.5;
+                font-size: 0.7rem;
+              `}>
+                v{WIDGET_VERSION}
+              </span>
+            </span>
+          </div>
+        </div>
+      </Paper>
+    )
+  }
 }
 
-Widget.versionManager = versionManager
