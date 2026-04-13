@@ -1558,6 +1558,7 @@ export default class Widget extends React.PureComponent<AllWidgetProps<IMConfig>
                 hoverPinColor={config.hoverPinColor}
                 isPanelVisible={this.state.isPanelVisible}
                 jimuMapView={this.state.jimuMapView}
+                autoShowSpatialLayers={config.autoShowSpatialLayers}
                 onDrawConnectLine={this.drawConnectLine}
               />
             </QueryWidgetContext.Provider>

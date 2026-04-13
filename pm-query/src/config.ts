@@ -238,6 +238,9 @@ export interface SettingConfig {
   mobilePopupHideDockButton?: boolean
   /** Hide the popup action bar (zoom-to, etc.) on mobile viewports ≤ 600px (default false) */
   mobilePopupHideActionBar?: boolean
+  // Spatial Layer Auto-Visibility
+  /** When true, target layers selected for a spatial query are automatically made visible on the map when the query runs. */
+  autoShowSpatialLayers?: boolean
   // Connect Points as Line
   /** When true, a polyline is drawn connecting returned point features in query order after each successful query. */
   connectPointsAsLine?: boolean

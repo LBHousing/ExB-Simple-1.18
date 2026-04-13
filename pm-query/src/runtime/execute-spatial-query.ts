@@ -37,6 +37,8 @@ export interface SpatialQueryParams {
   widgetId: string
   /** Per-layer spatial default query configs — used for outField resolution */
   layerDefaultConfigs?: Record<string, QueryItemType>
+  /** When true, make each target layer visible on the map before querying it */
+  autoShowLayers?: boolean
 }
 
 export interface SpatialQueryLayerResult {
@@ -62,7 +64,7 @@ export async function executeSpatialQuery (
 ): Promise<SpatialQueryResult> {
   const {
     inputGeometry, spatialRelationship, targetLayerIds,
-    targetUseDataSources, bufferDistance, bufferUnit, widgetId
+    targetUseDataSources, bufferDistance, bufferUnit, widgetId, autoShowLayers
   } = params
 
   const overallStart = performance.now()
@@ -106,6 +108,16 @@ export async function executeSpatialQuery (
 
       const featureLayer = (ds.layer || await (ds as any).createJSAPILayerByDataSource()) as __esri.FeatureLayer
       await featureLayer.load()
+
+      // Auto-show: make the layer visible on the map when the spatial query runs
+      if (autoShowLayers && featureLayer.visible === false) {
+        featureLayer.visible = true
+        debugLogger.log('SPATIAL', {
+          event: 'auto-show-layer',
+          layerId,
+          layerTitle: featureLayer.title
+        })
+      }
 
       // Build JSAPI Query with spatial parameters
       const query = featureLayer.createQuery()

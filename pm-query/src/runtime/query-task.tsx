@@ -114,6 +114,8 @@ export interface QueryTaskProps {
   panOnResultClick?: boolean
   isPanelVisible?: boolean  // r025.013: Buffer preview clear/restore on panel close/open
   jimuMapView?: JimuMapView | null  // r025.041: JimuMapView for JimuDraw in Spatial tab Draw mode
+  /** When true, target layers selected for a spatial query are made visible on the map when the query runs */
+  autoShowSpatialLayers?: boolean
   /** Optional callback: draw a polyline through THIS query's point features after success.
    *  mode = current SelectionType so caller can accumulate or replace lines. */
   onDrawConnectLine?: (newFeatures: __esri.Graphic[], mode: SelectionType) => Promise<void>
@@ -177,7 +179,7 @@ const style = css`
 `
 
 export function QueryTask (props: QueryTaskProps) {
-  const { queryItem, onNavBack, total, isInPopper = false, wrappedInPopper = false, className = '', index, initialInputValue, onHashParameterUsed, queryItems, selectedQueryIndex, onQueryChange, groups, ungrouped, groupOrder, selectedGroupId, selectedGroupQueryIndex, onGroupChange, onGroupQueryChange, onUngroupedChange, resultsMode, onResultsModeChange, accumulatedRecords, resultsExtent, onAccumulatedRecordsChange, graphicsLayer, mapView, onInitializeGraphicsLayer, onClearGraphicsLayer, onDestroyGraphicsLayer, activeTab: propActiveTab, onTabChange: propOnTabChange, eventManager, zoomOnResultClick, panOnResultClick, hoverPinColor, jimuMapView, ...otherProps } = props
+  const { queryItem, onNavBack, total, isInPopper = false, wrappedInPopper = false, className = '', index, initialInputValue, onHashParameterUsed, queryItems, selectedQueryIndex, onQueryChange, groups, ungrouped, groupOrder, selectedGroupId, selectedGroupQueryIndex, onGroupChange, onGroupQueryChange, onUngroupedChange, resultsMode, onResultsModeChange, accumulatedRecords, resultsExtent, onAccumulatedRecordsChange, graphicsLayer, mapView, onInitializeGraphicsLayer, onClearGraphicsLayer, onDestroyGraphicsLayer, activeTab: propActiveTab, onTabChange: propOnTabChange, eventManager, zoomOnResultClick, panOnResultClick, hoverPinColor, jimuMapView, autoShowSpatialLayers, ...otherProps } = props
   const getI18nMessage = hooks.useTranslation(defaultMessage)
   const zoomToRecords = useZoomToRecords(mapView, props.widgetId)
   // stage now in useReducer (r024.126 — A2b)
@@ -1107,7 +1109,8 @@ export function QueryTask (props: QueryTaskProps) {
       bufferDistance: params.bufferDistance,
       bufferUnit: params.bufferUnit,
       widgetId: props.widgetId,
-      layerDefaultConfigs
+      layerDefaultConfigs,
+      autoShowLayers: autoShowSpatialLayers
     })
 
     debugLogger.log('SPATIAL', {

@@ -102,6 +102,9 @@ export default {
   spatialResultDefault: 'Use as spatial result template',
   spatialOnly: 'Spatial only',
   spatialOnlyDescription: 'This layer participates in spatial queries but is hidden from the Query tab.',
+  // Spatial Layer Auto-Visibility
+  autoShowSpatialLayers: 'Show layers when queried',
+  autoShowSpatialLayersDescription: 'When a spatial query runs, any target layer that is currently hidden on the map will be turned on automatically so results are visible.',
   // Connect Points as Line
   connectPointsAsLine: 'Connect points as line',
   connectPointsAsLineDescription: 'After each query, draw a line connecting returned point features in order. Useful for route or corridor queries.',

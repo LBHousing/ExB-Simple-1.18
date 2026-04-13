@@ -40,6 +40,7 @@ export interface QueryTaskListProps {
   eventManager?: EventManager  // Chunk 7.1: Event Handling Manager
   isPanelVisible?: boolean  // r025.013: Buffer preview clear/restore on panel close/open
   jimuMapView?: JimuMapView | null  // r025.041: JimuMapView for JimuDraw in Spatial tab Draw mode
+  autoShowSpatialLayers?: boolean
   onDrawConnectLine?: (newFeatures: __esri.Graphic[], mode: import('../config').SelectionType) => Promise<void>
 }
 
@@ -136,7 +137,7 @@ const getQueryDisplayName = (item: ImmutableObject<QueryItemType>): string => {
 }
 
 export function QueryTaskList (props: QueryTaskListProps) {
-  const { queryItems, widgetId, defaultPageSize, isInPopper = false, className = '', initialQueryValue, shouldUseInitialQueryValueForSelection = false, onHashParameterUsed, resultsMode, onResultsModeChange, accumulatedRecords, resultsExtent, onAccumulatedRecordsChange, graphicsLayer, mapView, onInitializeGraphicsLayer, onClearGraphicsLayer, onDestroyGraphicsLayer, activeTab, onTabChange, eventManager, zoomOnResultClick, panOnResultClick, hoverPinColor, isPanelVisible, jimuMapView, onDrawConnectLine } = props
+  const { queryItems, widgetId, defaultPageSize, isInPopper = false, className = '', initialQueryValue, shouldUseInitialQueryValueForSelection = false, onHashParameterUsed, resultsMode, onResultsModeChange, accumulatedRecords, resultsExtent, onAccumulatedRecordsChange, graphicsLayer, mapView, onInitializeGraphicsLayer, onClearGraphicsLayer, onDestroyGraphicsLayer, activeTab, onTabChange, eventManager, zoomOnResultClick, panOnResultClick, hoverPinColor, isPanelVisible, jimuMapView, autoShowSpatialLayers, onDrawConnectLine } = props
   const getI18nMessage = hooks.useTranslation(defaultMessages)
   
   // Sort queries by display order before grouping
@@ -599,6 +600,7 @@ export function QueryTaskList (props: QueryTaskListProps) {
             hoverPinColor={hoverPinColor}
             isPanelVisible={isPanelVisible}
             jimuMapView={jimuMapView}
+            autoShowSpatialLayers={autoShowSpatialLayers}
             onDrawConnectLine={onDrawConnectLine}
               // No onNavBack - no navigation needed
             />

@@ -579,6 +579,18 @@ export default class Setting extends React.PureComponent<AllWidgetSettingProps<I
                 }}
               />
             </SettingRow>
+            <SettingRow label={this.getI18nMessage('autoShowSpatialLayers')}>
+              <Switch
+                checked={config.autoShowSpatialLayers === true}
+                onChange={(e) => {
+                  this.updateConfigForOptions(['autoShowSpatialLayers', e.target.checked])
+                }}
+                aria-label={this.getI18nMessage('autoShowSpatialLayers')}
+              />
+            </SettingRow>
+            <div css={css`font-size: 0.875rem; margin-top: 4px; padding: 0 16px 8px; opacity: 0.8;`}>
+              {this.getI18nMessage('autoShowSpatialLayersDescription')}
+            </div>
           </SettingSection>
         )}
         {this.props.config.queryItems.length > 0 && (
