@@ -971,17 +971,25 @@ export default class Widget extends React.PureComponent<AllWidgetProps<IMConfig>
   }
 
   /**
-   * Draws a polyline connecting point features in order after a successful query.
-   * Only fires when config.connectPointsAsLine is true.
-   * Uses a dedicated GraphicsLayer (id: 'querysimple-connect-line') separate from
-   * the highlight layer so it doesn't interfere with selection graphics.
+   * Draws a polyline connecting point features from THIS query after a successful search.
+   * Respects the current results mode so lines accumulate or replace in sync with records:
+   *
+   *   New Selection  — clears all previous lines, draws the new one
+   *   Add to         — keeps previous lines, appends a new independent line
+   *   Remove from    — removes the graphics tagged to this query's feature set
+   *
+   * Each set of graphics is tagged with a unique lineGroupId so Remove mode can
+   * identify exactly which line to strip without touching others.
+   *
+   * Uses a dedicated GraphicsLayer (id: 'pmquery-connect-line', listMode: 'show')
+   * separate from the highlight layer.
    */
-  public drawConnectLine = async (features: __esri.Graphic[]): Promise<void> => {
+  public drawConnectLine = async (newFeatures: __esri.Graphic[], mode: import('../config').SelectionType): Promise<void> => {
     const { config } = this.props
     if (!config.connectPointsAsLine) return
 
     const mapView = this.mapViewRef.current
-    if (!mapView || features.length < 2) return
+    if (!mapView || newFeatures.length < 2) return
 
     const { loadArcGISJSAPIModules } = await import('jimu-arcgis')
     const [Graphic, Polyline, GraphicsLayer] = await loadArcGISJSAPIModules([
@@ -990,43 +998,73 @@ export default class Widget extends React.PureComponent<AllWidgetProps<IMConfig>
       'esri/layers/GraphicsLayer'
     ])
 
-    // Get or create a dedicated layer for the connect line
-    const layerId = 'querysimple-connect-line'
+    const layerId = 'pmquery-connect-line'
     let layer = mapView.map.findLayerById(layerId) as __esri.GraphicsLayer
     if (!layer) {
-      layer = new GraphicsLayer({ id: layerId, title: 'Route Line', listMode: 'hide' })
+      layer = new GraphicsLayer({
+        id: layerId,
+        title: 'PMQuery Lines',
+        listMode: 'show'   // visible in LayerList so user can toggle it
+      })
       mapView.map.add(layer)
     }
-    layer.removeAll()
 
-    const path = features.map(f => {
+    const { SelectionType } = await import('../config')
+
+    if (mode === SelectionType.NewSelection) {
+      // Replace — clear all previous lines
+      layer.removeAll()
+    } else if (mode === SelectionType.RemoveFromSelection) {
+      // Remove — strip graphics tagged to features that overlap with this query.
+      // Use the first feature's ObjectID as a fingerprint for the group to remove.
+      const firstOid = newFeatures[0]?.attributes?.OBJECTID ?? newFeatures[0]?.attributes?.FID
+      if (firstOid != null) {
+        const toRemove = layer.graphics.filter((g: __esri.Graphic) =>
+          g.attributes?.pmqLineGroupOid === firstOid
+        ).toArray()
+        layer.removeMany(toRemove)
+      }
+      return  // Nothing new to draw in Remove mode
+    }
+    // Add mode falls through to draw below
+
+    // Unique tag for this line group so Remove mode can find it later
+    const groupOid = newFeatures[0]?.attributes?.OBJECTID ?? newFeatures[0]?.attributes?.FID ?? Date.now()
+
+    const path = newFeatures.map(f => {
       const pt = f.geometry as __esri.Point
       return [pt.x, pt.y]
     })
 
     const polyline = new Polyline({
       paths: [path],
-      spatialReference: features[0].geometry.spatialReference
+      spatialReference: newFeatures[0].geometry.spatialReference
     })
+
+    const lineColor = config.lineConnectColor || '#FF6B00'
+    const lineWidth = config.lineConnectWidth ?? 5
 
     layer.addMany([
       new Graphic({
         geometry: polyline,
+        attributes: { pmqLineGroupOid: groupOid },
         symbol: {
           type: 'simple-line',
-          color: config.lineConnectColor || '#FF6B00',
-          width: config.lineConnectWidth ?? 5,
+          color: lineColor,
+          width: lineWidth,
           style: 'solid',
           cap: 'round',
           join: 'round'
         }
       }),
       new Graphic({
-        geometry: features[0].geometry,
+        geometry: newFeatures[0].geometry,
+        attributes: { pmqLineGroupOid: groupOid },
         symbol: { type: 'simple-marker', color: '#34d399', size: 10, outline: { color: 'white', width: 1.5 } }
       }),
       new Graphic({
-        geometry: features[features.length - 1].geometry,
+        geometry: newFeatures[newFeatures.length - 1].geometry,
+        attributes: { pmqLineGroupOid: groupOid },
         symbol: { type: 'simple-marker', color: '#D2333F', size: 10, outline: { color: 'white', width: 1.5 } }
       })
     ])

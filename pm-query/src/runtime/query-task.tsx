@@ -114,8 +114,9 @@ export interface QueryTaskProps {
   panOnResultClick?: boolean
   isPanelVisible?: boolean  // r025.013: Buffer preview clear/restore on panel close/open
   jimuMapView?: JimuMapView | null  // r025.041: JimuMapView for JimuDraw in Spatial tab Draw mode
-  /** Optional callback: draw a polyline through point features after a successful query */
-  onDrawConnectLine?: (features: __esri.Graphic[]) => Promise<void>
+  /** Optional callback: draw a polyline through THIS query's point features after success.
+   *  mode = current SelectionType so caller can accumulate or replace lines. */
+  onDrawConnectLine?: (newFeatures: __esri.Graphic[], mode: SelectionType) => Promise<void>
 }
 
 // Helper function to get display name for query in dropdown

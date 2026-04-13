@@ -40,7 +40,7 @@ export interface QueryTaskListProps {
   eventManager?: EventManager  // Chunk 7.1: Event Handling Manager
   isPanelVisible?: boolean  // r025.013: Buffer preview clear/restore on panel close/open
   jimuMapView?: JimuMapView | null  // r025.041: JimuMapView for JimuDraw in Spatial tab Draw mode
-  onDrawConnectLine?: (features: __esri.Graphic[]) => Promise<void>
+  onDrawConnectLine?: (newFeatures: __esri.Graphic[], mode: import('../config').SelectionType) => Promise<void>
 }
 
 interface GroupedQueries {

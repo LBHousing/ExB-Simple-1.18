@@ -104,8 +104,10 @@ export interface QueryExecutionContext {
   // Internal callbacks
   clearResult: (reason?: string) => Promise<void>
   zoomToRecords: (records: FeatureDataRecord[]) => Promise<void>
-  /** Optional: called after successful point-feature query when connectPointsAsLine is on */
-  onDrawConnectLine?: (features: __esri.Graphic[]) => Promise<void>
+  /** Optional: called after successful point-feature query when connectPointsAsLine is on.
+   *  newFeatures = the features from THIS query only (used to draw the new line segment).
+   *  mode = current results mode so the handler knows whether to replace, add, or remove. */
+  onDrawConnectLine?: (newFeatures: __esri.Graphic[], mode: SelectionType) => Promise<void>
 }
 
 // ---------------------------------------------------------------------------
@@ -742,14 +744,15 @@ export async function executeQueryInternal (
 
       recordsRef.current = recordsToDisplay
 
-      // Connect points as line — draw polyline through point features in result order
-      if (onDrawConnectLine && recordsToDisplay && recordsToDisplay.length >= 2) {
-        const pointFeatures = (recordsToDisplay as FeatureDataRecord[])
+      // Connect points as line — draw polyline through THIS query's point features.
+      // Pass resultsMode so the handler can accumulate (Add), replace (New), or remove (Remove).
+      if (onDrawConnectLine && result.records && result.records.length >= 2) {
+        const newPointFeatures = (result.records as FeatureDataRecord[])
           .map(r => (r as any).feature as __esri.Graphic)
           .filter(g => g?.geometry?.type === 'point')
-        if (pointFeatures.length >= 2) {
-          onDrawConnectLine(pointFeatures).catch(e => {
-            console.error('[QuerySimple] connect-line draw failed', e)
+        if (newPointFeatures.length >= 2) {
+          onDrawConnectLine(newPointFeatures, resultsMode ?? SelectionType.NewSelection).catch(e => {
+            console.error('[PMQuery] connect-line draw failed', e)
           })
         }
       }
