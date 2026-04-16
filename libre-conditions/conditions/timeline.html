@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Timeline</title>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Outfit',sans-serif;background:#0a0e1a;color:#f1f5f9;padding:0 28px}
+.wrapper{max-width:1100px;margin:0 auto}
+
+/* Map section */
+.map-card{background:#1e2540;border:1px solid rgba(255,255,255,.06);border-radius:12px;overflow:hidden;margin-bottom:20px}
+.map-header{padding:16px 20px;border-bottom:1px solid rgba(255,255,255,.06);display:flex;align-items:center;justify-content:space-between}
+.map-header h3{font-size:15px;font-weight:600}.map-header .tag{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:1px;color:#64748b}
+.map-frame{width:100%;height:500px;border:none;display:block}
+.map-legend{padding:14px 20px;border-top:1px solid rgba(255,255,255,.06);display:flex;flex-wrap:wrap;gap:16px;font-size:12px;color:#94a3b8}
+.map-legend .dot{width:14px;height:14px;border-radius:3px;display:inline-block;vertical-align:middle;margin-right:6px}
+.map-note{padding:0 20px 14px;font-size:11px;color:#64748b;font-style:italic}
+
+/* Timeline card */
+.card{background:#1e2540;border:1px solid rgba(255,255,255,.06);border-radius:12px;padding:36px}
+h2{font-family:'Instrument Serif',serif;font-size:28px;font-weight:400;margin-bottom:20px}
+.timeline{position:relative;padding-left:32px;margin:24px 0}
+.timeline::before{content:'';position:absolute;left:11px;top:0;bottom:0;width:2px;background:rgba(255,255,255,.06)}
+.tl-item{position:relative;margin-bottom:28px}
+.tl-item:last-child{margin-bottom:0}
+.tl-item::before{content:'';position:absolute;left:-32px;top:4px;width:12px;height:12px;border-radius:50%;border:2px solid #D2333F;background:#0a0e1a}
+.tl-item.bl::before{border-color:#4d8ae8}
+.tl-item.pp::before{border-color:#F7BA21}
+.tl-item.gn::before{border-color:#34d399}
+.tl-year{font-size:12px;font-weight:700;color:#F7BA21;letter-spacing:1px;margin-bottom:4px}
+.tl-text{font-size:14px;color:#94a3b8;line-height:1.7;font-weight:300}
+.tl-text strong{color:#f1f5f9;font-weight:500}
+.tl-text ul{margin:8px 0 0 16px;list-style:none}
+.tl-text ul li{position:relative;padding-left:16px;margin-bottom:4px}
+.tl-text ul li::before{content:'';position:absolute;left:0;top:8px;width:6px;height:6px;border-radius:50%;background:#D2333F}
+.tl-text ul li.pp-dot::before{background:#F7BA21}
+.tl-text ul li.bl-dot::before{background:#4d8ae8}
+.callout{background:rgba(210,51,63,.06);border-left:3px solid #D2333F;padding:14px 18px;border-radius:0 8px 8px 0;margin-top:24px;font-size:14px;color:#94a3b8}
+.callout strong{color:#f1f5f9}
+@media(max-width:600px){.map-frame{height:350px}}
+</style>
+</head>
+<body>
+<div class="wrapper">
+
+  <!-- ── HOLC Redlining Map ── -->
+  <div class="map-card">
+    <div class="map-header">
+      <h3>HOLC "Residential Security" Map — Long Beach Area (1939)</h3>
+      <span class="tag">Source: Mapping Inequality · University of Richmond</span>
+    </div>
+    <!-- Mapping Inequality interactive embed centered on Long Beach -->
+    <iframe class="map-frame"
+      src="https://dsl.richmond.edu/panorama/redlining/map#loc=12/33.81/-118.19&city=los-angeles-ca"
+      title="HOLC Redlining Map of Long Beach area from the 1930s - interactive map from Mapping Inequality project"
+      allowfullscreen></iframe>
+    <div class="map-legend">
+      <span><span class="dot" style="background:#4daf4a"></span>Grade A — "Best" (green)</span>
+      <span><span class="dot" style="background:#377eb8"></span>Grade B — "Still Desirable" (blue)</span>
+      <span><span class="dot" style="background:#F7BA21"></span>Grade C — "Declining" (yellow)</span>
+      <span><span class="dot" style="background:#D2333F"></span>Grade D — "Hazardous" (red) — <strong style="color:#D2333F">redlined</strong></span>
+    </div>
+    <div class="map-note">Pan and zoom to explore Long Beach. Click any colored zone to read the original 1930s appraisal notes — including explicit references to race and "undesirable" populations.</div>
+  </div>
+
+  <!-- ── Timeline ── -->
+  <div class="card">
+    <h2>How We Got Here</h2>
+    <div class="timeline">
+
+      <div class="tl-item">
+        <div class="tl-year">1930s–1940s · Redlining</div>
+        <div class="tl-text"><strong>The Home Owners' Loan Corporation (HOLC)</strong> graded Long Beach neighborhoods by perceived "lending risk" — but race was the dominant factor. The map above shows the results: communities of color were coded <strong style="color:#D2333F">"Hazardous" (red)</strong>, cutting them off from mortgage lending and trapping residents in deteriorating housing.
+          <ul>
+            <li>Banks refused to lend in red-graded areas — no mortgages, no home equity, no wealth building</li>
+            <li>The FHA adopted similar maps, amplifying the damage across federal housing programs</li>
+            <li>HOLC appraisers explicitly cited the presence of Black, Latino, and Asian residents as risk factors</li>
+            <li class="pp-dot">Long Beach's West Side, Central, and North Long Beach were among the hardest hit</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="tl-item pp">
+        <div class="tl-year">1940s–1960s · Racial Covenants</div>
+        <div class="tl-text"><strong>Property deeds across Long Beach included legal restrictions</strong> preventing sale to Black, Latino, and Asian residents. Even after the Supreme Court struck down enforcement in 1948, the covenants remained on deeds and the segregation patterns they created were already locked in.
+          <ul>
+            <li class="pp-dot">Covenants restricted where people of color could buy, reinforcing redlined boundaries</li>
+            <li class="pp-dot">White neighborhoods received FHA-backed mortgages; redlined neighborhoods did not</li>
+            <li class="pp-dot">The wealth gap from denied homeownership compounds across generations</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="tl-item bl">
+        <div class="tl-year">1960s–1990s · The Disinvestment Cycle</div>
+        <div class="tl-text">Without access to credit, homeownership, or public investment, <strong>redlined neighborhoods entered decades of decline</strong>. Property values dropped, maintenance was deferred, and housing stock aged without reinvestment. Landlords extracted rent while investing as little as possible.
+          <ul>
+            <li class="bl-dot">Fair Housing Act of 1968 outlawed redlining — but the damage was already done</li>
+            <li class="bl-dot">Neighborhoods remained segregated by income and race through inertia and ongoing discrimination</li>
+            <li class="bl-dot">Aging buildings meant rising code violations, health hazards, and unsafe living conditions</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="tl-item">
+        <div class="tl-year">2000s–Present · The Crisis Today</div>
+        <div class="tl-text">These same neighborhoods now have the <strong style="color:#D2333F">highest rates of code violations</strong>, the <strong style="color:#D2333F">most eviction filings</strong>, and the <strong style="color:#D2333F">greatest concentration of cost-burdened renters</strong>. Corporate entities are buying up properties in these areas, and the tenants — disproportionately BIPOC — face displacement.
+          <ul>
+            <li>53.1% of Long Beach renters are cost burdened — spending 30%+ of income on housing</li>
+            <li>24.9% of all dwelling units are now owned by LLCs, corporations, and partnerships</li>
+            <li>The Block the Cuts and Build Long Beach Ordinance aims to reinvest in these communities</li>
+            <li class="pp-dot"><strong>90 years later, the map of housing distress matches the 1939 redlining map</strong></li>
+          </ul>
+        </div>
+      </div>
+
+    </div>
+
+    <div class="callout"><strong>The pattern is not a coincidence.</strong> When you overlay today's code violation data, eviction heat maps, and demographic data, the geography matches the HOLC redlining map above. The disinvestment was deliberate. The consequences are ongoing. The data on this page connects the dots — from the red lines drawn in the 1930s to the eviction notices served today.</div>
+  </div>
+
+</div>
+</body>
+</html>
