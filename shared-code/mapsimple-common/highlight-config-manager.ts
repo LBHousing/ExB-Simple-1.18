@@ -182,19 +182,59 @@ class HighlightConfigManager {
   }
 
   /**
-   * Convert hex color to RGB array
+   * Convert hex color to RGB array.
+   * Handles:
+   *   - 6-digit hex:  #DF00FF  → [223, 0, 255]
+   *   - 3-digit hex:  #F0F     → [255, 0, 255]
+   *   - CSS var:      var(--sys-color-primary-main)  → resolved via getComputedStyle
+   *   - rgb/rgba:     rgb(223, 0, 255)               → parsed directly
+   * Falls back to magenta [223, 0, 255] on any parse failure.
    * @private
    */
   private hexToRgb(hex: string): [number, number, number] {
-    const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex)
-    if (!result) {
-      return [223, 0, 255] // Magenta fallback (#DF00FF)
+    if (!hex) return [223, 0, 255]
+
+    const trimmed = hex.trim()
+
+    // CSS variable — resolve against document root
+    if (trimmed.startsWith('var(')) {
+      try {
+        const varName = trimmed.replace(/^var\(\s*/, '').replace(/\s*\).*$/, '')
+        const resolved = getComputedStyle(document.documentElement).getPropertyValue(varName).trim()
+        if (resolved) return this.hexToRgb(resolved)
+      } catch {
+        // fall through to magenta
+      }
+      return [223, 0, 255]
     }
-    return [
-      parseInt(result[1], 16),
-      parseInt(result[2], 16),
-      parseInt(result[3], 16)
-    ]
+
+    // rgb(...) or rgba(...)
+    const rgbMatch = /rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i.exec(trimmed)
+    if (rgbMatch) {
+      return [parseInt(rgbMatch[1]), parseInt(rgbMatch[2]), parseInt(rgbMatch[3])]
+    }
+
+    // 3-digit hex: #RGB → #RRGGBB
+    const shortHex = /^#?([a-f\d])([a-f\d])([a-f\d])$/i.exec(trimmed)
+    if (shortHex) {
+      return [
+        parseInt(shortHex[1] + shortHex[1], 16),
+        parseInt(shortHex[2] + shortHex[2], 16),
+        parseInt(shortHex[3] + shortHex[3], 16)
+      ]
+    }
+
+    // 6-digit hex: #RRGGBB
+    const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(trimmed)
+    if (result) {
+      return [
+        parseInt(result[1], 16),
+        parseInt(result[2], 16),
+        parseInt(result[3], 16)
+      ]
+    }
+
+    return [223, 0, 255] // Magenta fallback
   }
 }
 
