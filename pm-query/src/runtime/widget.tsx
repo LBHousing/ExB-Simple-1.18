@@ -1022,17 +1022,21 @@ export default class Widget extends React.PureComponent<AllWidgetProps<IMConfig>
     const lineColor = config.lineConnectColor || '#FF6B00'
     const lineWidth = config.lineConnectWidth ?? 5
 
-    // Group points by route so points from different routes don't cross-connect.
-    // Try common route field names in order; fall back to drawing all as one group.
-    const routeFieldCandidates = ['ROUTE', 'RTE', 'HWY', 'HIGHWAY', 'ROAD_NAME', 'STREET']
-    const routeField = routeFieldCandidates.find(f =>
-      newFeatures[0]?.attributes?.[f] !== undefined && newFeatures[0]?.attributes?.[f] !== null
-    ) ?? null
+    // Group points by route+direction so points on the same route but opposite
+    // directions don't cross-connect (e.g. Route 5 North vs Route 5 South).
+    // Uses the known postmile schema: Route, County, District, PM, PMc, Odometer, Direction, PMoffset.
+    // Falls back gracefully if Route or Direction are absent.
+    const attrs0 = newFeatures[0]?.attributes ?? {}
+    const hasRoute = attrs0.Route !== undefined && attrs0.Route !== null
+    const hasDirection = attrs0.Direction !== undefined && attrs0.Direction !== null
 
-    // Build route → features map
+    // Build route+direction → features map
     const routeGroups: Map<string, __esri.Graphic[]> = new Map()
     newFeatures.forEach(f => {
-      const routeKey = routeField ? String(f.attributes?.[routeField] ?? '__single__') : '__single__'
+      const route = hasRoute ? String(f.attributes?.Route ?? '') : ''
+      const dir = hasDirection ? String(f.attributes?.Direction ?? '') : ''
+      // Key: "Route|Direction" — if both absent, all points go into one group
+      const routeKey = (route || dir) ? `${route}|${dir}` : '__single__'
       if (!routeGroups.has(routeKey)) routeGroups.set(routeKey, [])
       routeGroups.get(routeKey)!.push(f)
     })
@@ -1040,10 +1044,12 @@ export default class Widget extends React.PureComponent<AllWidgetProps<IMConfig>
     const graphicsToAdd: __esri.Graphic[] = []
 
     routeGroups.forEach((features, routeKey) => {
-      // Sort each route group by PM ascending
+      // Sort each route group by Odometer (continuous across county lines) if present,
+      // otherwise fall back to PM (resets at county boundaries).
+      const useOdometer = features[0]?.attributes?.Odometer != null
       const sorted = [...features].sort((a, b) => {
-        const av = parseFloat(a.attributes?.PM) || 0
-        const bv = parseFloat(b.attributes?.PM) || 0
+        const av = parseFloat(useOdometer ? a.attributes?.Odometer : a.attributes?.PM) || 0
+        const bv = parseFloat(useOdometer ? b.attributes?.Odometer : b.attributes?.PM) || 0
         return av - bv
       })
 
