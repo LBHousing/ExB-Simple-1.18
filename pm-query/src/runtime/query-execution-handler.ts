@@ -744,16 +744,29 @@ export async function executeQueryInternal (
 
       recordsRef.current = recordsToDisplay
 
-      // Connect points as line — draw polyline through THIS query's point features.
-      // Pass resultsMode so the handler can accumulate (Add), replace (New), or remove (Remove).
-      if (onDrawConnectLine && result.records && result.records.length >= 2) {
-        const newPointFeatures = (result.records as FeatureDataRecord[])
-          .map(r => (r as any).feature as __esri.Graphic)
-          .filter(g => g?.geometry?.type === 'point')
-        if (newPointFeatures.length >= 2) {
-          onDrawConnectLine(newPointFeatures, resultsMode ?? SelectionType.NewSelection).catch(e => {
-            console.error('[PMQuery] connect-line draw failed', e)
-          })
+      // Connect points as line.
+      // - New / Add: draw from THIS query's result features (the delta).
+      // - Remove: rebuild from recordsToDisplay (the remaining records after removal).
+      if (onDrawConnectLine) {
+        const isRemove = resultsMode === SelectionType.RemoveFromSelection
+        const sourceRecords = isRemove
+          ? (recordsToDisplay as FeatureDataRecord[])   // full remaining set
+          : (result.records as FeatureDataRecord[])     // delta from this query
+        if (sourceRecords && sourceRecords.length >= 2) {
+          const pointFeatures = sourceRecords
+            .map(r => (r as any).feature as __esri.Graphic)
+            .filter(g => g?.geometry?.type === 'point')
+          if (pointFeatures.length >= 2) {
+            onDrawConnectLine(pointFeatures, resultsMode ?? SelectionType.NewSelection).catch(e => {
+              console.error('[PMQuery] connect-line draw failed', e)
+            })
+          } else if (isRemove && pointFeatures.length === 0) {
+            // All points removed — clear the line layer
+            onDrawConnectLine([], resultsMode ?? SelectionType.RemoveFromSelection).catch(() => {})
+          }
+        } else if (isRemove) {
+          // All records removed — clear the line layer
+          onDrawConnectLine([], SelectionType.RemoveFromSelection).catch(() => {})
         }
       }
 

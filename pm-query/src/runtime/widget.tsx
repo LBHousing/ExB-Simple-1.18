@@ -1011,70 +1011,83 @@ export default class Widget extends React.PureComponent<AllWidgetProps<IMConfig>
 
     const { SelectionType } = await import('../config')
 
-    if (mode === SelectionType.NewSelection) {
-      // Replace — clear all previous lines
+    // Clear the layer first for New mode; for Add we append; for Remove we fully rebuild.
+    if (mode === SelectionType.NewSelection || mode === SelectionType.RemoveFromSelection) {
       layer.removeAll()
-    } else if (mode === SelectionType.RemoveFromSelection) {
-      // Remove — strip graphics tagged to features that overlap with this query.
-      // Use the first feature's ObjectID as a fingerprint for the group to remove.
-      const firstOid = newFeatures[0]?.attributes?.OBJECTID ?? newFeatures[0]?.attributes?.FID
-      if (firstOid != null) {
-        const toRemove = layer.graphics.filter((g: __esri.Graphic) =>
-          g.attributes?.pmqLineGroupOid === firstOid
-        ).toArray()
-        layer.removeMany(toRemove)
-      }
-      return  // Nothing new to draw in Remove mode
     }
-    // Add mode falls through to draw below
 
-    // Sort by postmile (PM field) so points connect in road order, not query-return order
-    const sorted = [...newFeatures].sort((a, b) => {
-      const av = parseFloat(a.attributes?.PM) || 0
-      const bv = parseFloat(b.attributes?.PM) || 0
-      return av - bv
-    })
-
-    // Unique tag for this line group so Remove mode can find it later
-    const groupOid = sorted[0]?.attributes?.OBJECTID ?? sorted[0]?.attributes?.FID ?? Date.now()
-
-    const path = sorted.map(f => {
-      const pt = f.geometry as __esri.Point
-      return [pt.x, pt.y]
-    })
-
-    const polyline = new Polyline({
-      paths: [path],
-      spatialReference: sorted[0].geometry.spatialReference
-    })
+    // Empty array = caller wants the layer cleared (all records removed)
+    if (newFeatures.length === 0) return
 
     const lineColor = config.lineConnectColor || '#FF6B00'
     const lineWidth = config.lineConnectWidth ?? 5
 
-    layer.addMany([
-      new Graphic({
-        geometry: polyline,
-        attributes: { pmqLineGroupOid: groupOid },
-        symbol: {
-          type: 'simple-line',
-          color: lineColor,
-          width: lineWidth,
-          style: 'solid',
-          cap: 'round',
-          join: 'round'
-        }
-      }),
-      new Graphic({
-        geometry: sorted[0].geometry,
-        attributes: { pmqLineGroupOid: groupOid },
-        symbol: { type: 'simple-marker', color: '#34d399', size: 10, outline: { color: 'white', width: 1.5 } }
-      }),
-      new Graphic({
-        geometry: sorted[sorted.length - 1].geometry,
-        attributes: { pmqLineGroupOid: groupOid },
-        symbol: { type: 'simple-marker', color: '#D2333F', size: 10, outline: { color: 'white', width: 1.5 } }
+    // Group points by route so points from different routes don't cross-connect.
+    // Try common route field names in order; fall back to drawing all as one group.
+    const routeFieldCandidates = ['ROUTE', 'RTE', 'HWY', 'HIGHWAY', 'ROAD_NAME', 'STREET']
+    const routeField = routeFieldCandidates.find(f =>
+      newFeatures[0]?.attributes?.[f] !== undefined && newFeatures[0]?.attributes?.[f] !== null
+    ) ?? null
+
+    // Build route → features map
+    const routeGroups: Map<string, __esri.Graphic[]> = new Map()
+    newFeatures.forEach(f => {
+      const routeKey = routeField ? String(f.attributes?.[routeField] ?? '__single__') : '__single__'
+      if (!routeGroups.has(routeKey)) routeGroups.set(routeKey, [])
+      routeGroups.get(routeKey)!.push(f)
+    })
+
+    const graphicsToAdd: __esri.Graphic[] = []
+
+    routeGroups.forEach((features, routeKey) => {
+      // Sort each route group by PM ascending
+      const sorted = [...features].sort((a, b) => {
+        const av = parseFloat(a.attributes?.PM) || 0
+        const bv = parseFloat(b.attributes?.PM) || 0
+        return av - bv
       })
-    ])
+
+      if (sorted.length < 2) return // need at least 2 points for a line
+
+      const groupTag = routeKey  // use route key as the group tag
+
+      const path = sorted.map(f => {
+        const pt = f.geometry as __esri.Point
+        return [pt.x, pt.y]
+      })
+
+      const polyline = new Polyline({
+        paths: [path],
+        spatialReference: sorted[0].geometry.spatialReference
+      })
+
+      graphicsToAdd.push(
+        new Graphic({
+          geometry: polyline,
+          attributes: { pmqLineGroupOid: groupTag },
+          symbol: {
+            type: 'simple-line',
+            color: lineColor,
+            width: lineWidth,
+            style: 'solid',
+            cap: 'round',
+            join: 'round'
+          }
+        }),
+        new Graphic({
+          geometry: sorted[0].geometry,
+          attributes: { pmqLineGroupOid: groupTag },
+          symbol: { type: 'simple-marker', color: '#34d399', size: 10, outline: { color: 'white', width: 1.5 } }
+        }),
+        new Graphic({
+          geometry: sorted[sorted.length - 1].geometry,
+          attributes: { pmqLineGroupOid: groupTag },
+          symbol: { type: 'simple-marker', color: '#D2333F', size: 10, outline: { color: 'white', width: 1.5 } }
+        })
+      )
+    })
+
+    layer.addMany(graphicsToAdd)
   }
 
   /**
