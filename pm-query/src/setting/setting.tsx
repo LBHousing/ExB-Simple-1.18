@@ -539,6 +539,19 @@ export default class Setting extends React.PureComponent<AllWidgetSettingProps<I
                     }}
                   />
                 </SettingRow>
+                <SettingRow label={this.getI18nMessage('shnLayerTitle')} flow='wrap'>
+                  <TextInput
+                    value={config.shnLayerTitle ?? ''}
+                    placeholder={this.getI18nMessage('shnLayerTitlePlaceholder')}
+                    onChange={(e) => {
+                      this.updateConfigForOptions(['shnLayerTitle', e.target.value])
+                    }}
+                    css={css`width: 100%;`}
+                  />
+                </SettingRow>
+                <div css={css`font-size: 0.8rem; padding: 0 16px 8px; opacity: 0.75;`}>
+                  {this.getI18nMessage('shnLayerTitleDescription')}
+                </div>
               </>
             )}
           </SettingSection>

@@ -248,6 +248,13 @@ export interface SettingConfig {
   lineConnectColor?: string
   /** Width in pixels for the connect-points line. Default: 5. */
   lineConnectWidth?: number
+  /**
+   * Title of the State Highway Network (SHN) polyline layer already added to the map.
+   * When set, the connect-line traces actual road geometry from that layer instead of
+   * drawing straight segments between postmile points.
+   * Default: 'State Highway Network Lines - Caltrans'
+   */
+  shnLayerTitle?: string
   sizeMap?: {
     arrangementIconPopper?: SizeMap
   }

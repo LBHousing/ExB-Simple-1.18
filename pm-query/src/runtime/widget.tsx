@@ -989,7 +989,7 @@ export default class Widget extends React.PureComponent<AllWidgetProps<IMConfig>
     if (!config.connectPointsAsLine) return
 
     const mapView = this.mapViewRef.current
-    if (!mapView || newFeatures.length < 2) return
+    if (!mapView) return
 
     const { loadArcGISJSAPIModules } = await import('jimu-arcgis')
     const [Graphic, Polyline, GraphicsLayer] = await loadArcGISJSAPIModules([
@@ -1004,48 +1004,54 @@ export default class Widget extends React.PureComponent<AllWidgetProps<IMConfig>
       layer = new GraphicsLayer({
         id: layerId,
         title: 'PMQuery Lines',
-        listMode: 'show'   // visible in LayerList so user can toggle it
+        listMode: 'show'
       })
       mapView.map.add(layer)
     }
 
     const { SelectionType } = await import('../config')
 
-    // Clear the layer first for New mode; for Add we append; for Remove we fully rebuild.
+    // Clear for New and Remove (Remove rebuilds from remaining records)
     if (mode === SelectionType.NewSelection || mode === SelectionType.RemoveFromSelection) {
       layer.removeAll()
     }
 
-    // Empty array = caller wants the layer cleared (all records removed)
+    // Empty array = all records removed, just clear
     if (newFeatures.length === 0) return
 
     const lineColor = config.lineConnectColor || '#FF6B00'
     const lineWidth = config.lineConnectWidth ?? 5
 
-    // Group points by route+direction so points on the same route but opposite
-    // directions don't cross-connect (e.g. Route 5 North vs Route 5 South).
-    // Uses the known postmile schema: Route, County, District, PM, PMc, Odometer, Direction, PMoffset.
-    // Falls back gracefully if Route or Direction are absent.
+    // Group by Route + Direction using known postmile schema
     const attrs0 = newFeatures[0]?.attributes ?? {}
     const hasRoute = attrs0.Route !== undefined && attrs0.Route !== null
     const hasDirection = attrs0.Direction !== undefined && attrs0.Direction !== null
 
-    // Build route+direction → features map
     const routeGroups: Map<string, __esri.Graphic[]> = new Map()
     newFeatures.forEach(f => {
       const route = hasRoute ? String(f.attributes?.Route ?? '') : ''
       const dir = hasDirection ? String(f.attributes?.Direction ?? '') : ''
-      // Key: "Route|Direction" — if both absent, all points go into one group
       const routeKey = (route || dir) ? `${route}|${dir}` : '__single__'
       if (!routeGroups.has(routeKey)) routeGroups.set(routeKey, [])
       routeGroups.get(routeKey)!.push(f)
     })
 
+    // Find SHN layer in map by configured title (case-insensitive)
+    const shnTitle = (config.shnLayerTitle ?? 'State Highway Network Lines - Caltrans').trim()
+    const shnLayer = shnTitle
+      ? mapView.map.allLayers.find(l =>
+          l.title?.toLowerCase() === shnTitle.toLowerCase() &&
+          (l as any).type === 'feature'
+        ) as __esri.FeatureLayer | undefined
+      : undefined
+
     const graphicsToAdd: __esri.Graphic[] = []
 
-    routeGroups.forEach((features, routeKey) => {
-      // Sort each route group by Odometer (continuous across county lines) if present,
-      // otherwise fall back to PM (resets at county boundaries).
+    // Process each Route|Direction group independently
+    for (const [routeKey, features] of routeGroups) {
+      if (features.length < 2) continue
+
+      // Sort by Odometer (continuous) or fall back to PM
       const useOdometer = features[0]?.attributes?.Odometer != null
       const sorted = [...features].sort((a, b) => {
         const av = parseFloat(useOdometer ? a.attributes?.Odometer : a.attributes?.PM) || 0
@@ -1053,24 +1059,65 @@ export default class Widget extends React.PureComponent<AllWidgetProps<IMConfig>
         return av - bv
       })
 
-      if (sorted.length < 2) return // need at least 2 points for a line
+      const [routeVal, dirVal] = routeKey === '__single__' ? ['', ''] : routeKey.split('|')
+      const minOdo = parseFloat(useOdometer ? sorted[0].attributes?.Odometer : sorted[0].attributes?.PM) || 0
+      const maxOdo = parseFloat(useOdometer ? sorted[sorted.length - 1].attributes?.Odometer : sorted[sorted.length - 1].attributes?.PM) || 0
 
-      const groupTag = routeKey  // use route key as the group tag
+      let lineGeometry: __esri.Polyline | null = null
 
-      const path = sorted.map(f => {
-        const pt = f.geometry as __esri.Point
-        return [pt.x, pt.y]
-      })
+      // --- Attempt SHN road trace ---
+      if (shnLayer && routeVal) {
+        try {
+          // Query SHN segments that overlap our odometer range on this route+direction
+          let where = `Route = '${routeVal}'`
+          if (dirVal) where += ` AND Direction = '${dirVal}'`
+          where += ` AND bOdometer <= ${maxOdo} AND eOdometer >= ${minOdo}`
 
-      const polyline = new Polyline({
-        paths: [path],
-        spatialReference: sorted[0].geometry.spatialReference
-      })
+          const shnResult = await (shnLayer as __esri.FeatureLayer).queryFeatures({
+            where,
+            returnGeometry: true,
+            outFields: ['bOdometer', 'eOdometer'],
+            orderByFields: ['bOdometer ASC']
+          })
+
+          if (shnResult?.features?.length > 0) {
+            // Merge all returned segment paths into one polyline
+            const allPaths: number[][][] = []
+            shnResult.features.forEach((seg: __esri.Graphic) => {
+              const segLine = seg.geometry as __esri.Polyline
+              if (segLine?.paths) {
+                segLine.paths.forEach(path => allPaths.push(path))
+              }
+            })
+
+            if (allPaths.length > 0) {
+              lineGeometry = new Polyline({
+                paths: allPaths,
+                spatialReference: shnResult.features[0].geometry.spatialReference
+              })
+            }
+          }
+        } catch (e) {
+          console.warn('[PMQuery] SHN query failed, falling back to point-connect', e)
+        }
+      }
+
+      // --- Fallback: straight segments between sorted postmile points ---
+      if (!lineGeometry) {
+        const path = sorted.map(f => {
+          const pt = f.geometry as __esri.Point
+          return [pt.x, pt.y]
+        })
+        lineGeometry = new Polyline({
+          paths: [path],
+          spatialReference: sorted[0].geometry.spatialReference
+        })
+      }
 
       graphicsToAdd.push(
         new Graphic({
-          geometry: polyline,
-          attributes: { pmqLineGroupOid: groupTag },
+          geometry: lineGeometry,
+          attributes: { pmqLineGroupOid: routeKey },
           symbol: {
             type: 'simple-line',
             color: lineColor,
@@ -1080,18 +1127,20 @@ export default class Widget extends React.PureComponent<AllWidgetProps<IMConfig>
             join: 'round'
           }
         }),
+        // Green start marker (lowest odometer)
         new Graphic({
           geometry: sorted[0].geometry,
-          attributes: { pmqLineGroupOid: groupTag },
+          attributes: { pmqLineGroupOid: routeKey },
           symbol: { type: 'simple-marker', color: '#34d399', size: 10, outline: { color: 'white', width: 1.5 } }
         }),
+        // Red end marker (highest odometer)
         new Graphic({
           geometry: sorted[sorted.length - 1].geometry,
-          attributes: { pmqLineGroupOid: groupTag },
+          attributes: { pmqLineGroupOid: routeKey },
           symbol: { type: 'simple-marker', color: '#D2333F', size: 10, outline: { color: 'white', width: 1.5 } }
         })
       )
-    })
+    }
 
     layer.addMany(graphicsToAdd)
   }
