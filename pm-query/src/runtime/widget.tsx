@@ -1022,22 +1022,25 @@ export default class Widget extends React.PureComponent<AllWidgetProps<IMConfig>
     const lineColor = config.lineConnectColor || '#FF6B00'
     const lineWidth = config.lineConnectWidth ?? 5
 
-    // Group by Route + Direction using known postmile schema
+    // Group by PMRouteID — the definitive alignment key in the Caltrans postmile schema.
+    // Format: {County}{Route}.{Suffix}.{Align} e.g. "PLA080.R.L"
+    // This correctly separates left/right splits and independent alignments that share
+    // the same Route+Direction but are physically separate roadways.
+    // Falls back to Route|Direction if PMRouteID is absent.
     const attrs0 = newFeatures[0]?.attributes ?? {}
-    const hasRoute = attrs0.Route !== undefined && attrs0.Route !== null
-    const hasDirection = attrs0.Direction !== undefined && attrs0.Direction !== null
+    const hasPMRouteID = attrs0.PMRouteID !== undefined && attrs0.PMRouteID !== null && attrs0.PMRouteID !== ''
 
     const routeGroups: Map<string, __esri.Graphic[]> = new Map()
     newFeatures.forEach(f => {
-      const route = hasRoute ? String(f.attributes?.Route ?? '') : ''
-      const dir = hasDirection ? String(f.attributes?.Direction ?? '') : ''
-      const routeKey = (route || dir) ? `${route}|${dir}` : '__single__'
+      const routeKey = hasPMRouteID
+        ? String(f.attributes?.PMRouteID ?? '__single__')
+        : `${f.attributes?.Route ?? ''}|${f.attributes?.Direction ?? ''}`
       if (!routeGroups.has(routeKey)) routeGroups.set(routeKey, [])
       routeGroups.get(routeKey)!.push(f)
     })
 
     // Find SHN layer in map by configured title (case-insensitive)
-    const shnTitle = (config.shnLayerTitle ?? 'State Highway Network Lines - Caltrans').trim()
+    const shnTitle = (config.shnLayerTitle ?? '').trim()
     const shnLayer = shnTitle
       ? mapView.map.allLayers.find(l =>
           l.title?.toLowerCase() === shnTitle.toLowerCase() &&
@@ -1047,11 +1050,11 @@ export default class Widget extends React.PureComponent<AllWidgetProps<IMConfig>
 
     const graphicsToAdd: __esri.Graphic[] = []
 
-    // Process each Route|Direction group independently
+    // Process each PMRouteID group independently
     for (const [routeKey, features] of routeGroups) {
       if (features.length < 2) continue
 
-      // Sort by Odometer (continuous) or fall back to PM
+      // Sort by Odometer (continuous statewide) — never resets at county lines
       const useOdometer = features[0]?.attributes?.Odometer != null
       const sorted = [...features].sort((a, b) => {
         const av = parseFloat(useOdometer ? a.attributes?.Odometer : a.attributes?.PM) || 0
@@ -1059,37 +1062,42 @@ export default class Widget extends React.PureComponent<AllWidgetProps<IMConfig>
         return av - bv
       })
 
-      const [routeVal, dirVal] = routeKey === '__single__' ? ['', ''] : routeKey.split('|')
       const minOdo = parseFloat(useOdometer ? sorted[0].attributes?.Odometer : sorted[0].attributes?.PM) || 0
       const maxOdo = parseFloat(useOdometer ? sorted[sorted.length - 1].attributes?.Odometer : sorted[sorted.length - 1].attributes?.PM) || 0
 
       let lineGeometry: __esri.Polyline | null = null
 
       // --- Attempt SHN road trace ---
-      if (shnLayer && routeVal) {
+      if (shnLayer) {
         try {
-          // Query SHN segments that overlap our odometer range on this route+direction
-          let where = `Route = '${routeVal}'`
-          if (dirVal) where += ` AND Direction = '${dirVal}'`
-          where += ` AND bOdometer <= ${maxOdo} AND eOdometer >= ${minOdo}`
+          // Query SHN by PMRouteID when available — most precise match.
+          // PMRouteID is shared between both shapefiles and uniquely identifies
+          // each physical alignment including left/right splits.
+          // SHN Route field is numeric so no quotes around the value.
+          let where: string
+          if (hasPMRouteID && routeKey !== '__single__') {
+            where = `PMRouteID = '${routeKey}' AND bOdometer <= ${maxOdo} AND eOdometer >= ${minOdo}`
+          } else {
+            // Fallback: Route (numeric) + Direction + odometer range
+            const routeNum = sorted[0].attributes?.Route
+            const dir = sorted[0].attributes?.Direction ?? ''
+            where = `Route = ${routeNum} AND Direction = '${dir}' AND bOdometer <= ${maxOdo} AND eOdometer >= ${minOdo}`
+          }
 
           const shnResult = await (shnLayer as __esri.FeatureLayer).queryFeatures({
             where,
             returnGeometry: true,
-            outFields: ['bOdometer', 'eOdometer'],
+            outFields: ['PMRouteID', 'bOdometer', 'eOdometer'],
             orderByFields: ['bOdometer ASC']
           })
 
           if (shnResult?.features?.length > 0) {
-            // Merge all returned segment paths into one polyline
+            // Merge all returned segment paths into one polyline in odometer order
             const allPaths: number[][][] = []
             shnResult.features.forEach((seg: __esri.Graphic) => {
               const segLine = seg.geometry as __esri.Polyline
-              if (segLine?.paths) {
-                segLine.paths.forEach(path => allPaths.push(path))
-              }
+              if (segLine?.paths) segLine.paths.forEach(p => allPaths.push(p))
             })
-
             if (allPaths.length > 0) {
               lineGeometry = new Polyline({
                 paths: allPaths,
